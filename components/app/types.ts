@@ -1,23 +1,13 @@
+export type ChannelType = "text" | "voice";
+
 export type UserStatus = "online" | "idle" | "dnd" | "offline";
 
-export interface PamplexMember {
-  id: string;
-  name: string;
-  username: string;
-  initials: string;
-  accentColor: string;
-  status: UserStatus;
-  role?: string;
-  roleVariant?: "turquesa" | "esmeralda" | "floresta" | "neutral";
-  inVoiceChannelId?: string;
-  isSpeaking?: boolean;
-  isMuted?: boolean;
-}
+export type FriendRelation = "friend" | "pending_incoming" | "pending_outgoing";
 
 export interface PamplexChannel {
   id: string;
   name: string;
-  type: "text" | "voice";
+  type: ChannelType;
   category: string;
   unread?: boolean;
 }
@@ -31,6 +21,21 @@ export interface PamplexServer {
   isSpeakingNow: boolean;
   activeSpeakersInitials: string[];
   channels: PamplexChannel[];
+}
+
+export interface PamplexMember {
+  id: string;
+  name: string;
+  username: string;
+  initials: string;
+  status: UserStatus;
+  role?: string;
+  accentColor: string;
+  inVoiceChannelId?: string;
+  isMuted?: boolean;
+  isSpeaking?: boolean;
+  relation?: FriendRelation;
+  customStatus?: string;
 }
 
 export interface MessageReaction {
@@ -52,57 +57,6 @@ export interface PamplexMessage {
   reactions: MessageReaction[];
 }
 
-export const INITIAL_MEMBERS: PamplexMember[] = [
-  {
-    id: "u1",
-    name: "Gustavo Kriguer",
-    username: "gustavo",
-    initials: "GK",
-    accentColor: "bg-pamplex-turquesa text-pamplex-dark",
-    status: "online",
-    role: "Fundador",
-    roleVariant: "turquesa",
-    inVoiceChannelId: "c-voice-1",
-    isSpeaking: true,
-  },
-  {
-    id: "u2",
-    name: "Ana Beatriz",
-    username: "anabia",
-    initials: "AB",
-    accentColor: "bg-pamplex-esmeralda text-pamplex-dark",
-    status: "online",
-    role: "Moderação",
-    roleVariant: "floresta",
-    inVoiceChannelId: "c-voice-1",
-    isSpeaking: false,
-  },
-  {
-    id: "u3",
-    name: "Lucas Mendes",
-    username: "lucasm",
-    initials: "LM",
-    accentColor: "bg-pamplex-elevated text-pamplex-aqua",
-    status: "idle",
-  },
-  {
-    id: "u4",
-    name: "Mariana Costa",
-    username: "maricosta",
-    initials: "MC",
-    accentColor: "bg-pamplex-elevated text-pamplex-menta",
-    status: "online",
-  },
-  {
-    id: "u5",
-    name: "Rafael Torres",
-    username: "rafael",
-    initials: "RT",
-    accentColor: "bg-pamplex-elevated text-pamplex-text-secondary",
-    status: "offline",
-  },
-];
-
 export const INITIAL_SERVERS: PamplexServer[] = [
   {
     id: "s1",
@@ -121,14 +75,14 @@ export const INITIAL_SERVERS: PamplexServer[] = [
   },
   {
     id: "s2",
-    name: "Oficina 3D & Maker",
+    name: "Oficina 3D & CAD",
     initials: "3D",
     folder: "Projetos",
     hasActiveVoice: false,
     isSpeakingNow: false,
     activeSpeakersInitials: [],
     channels: [
-      { id: "c-3d-1", name: "impressões", type: "text", category: "Bancada" },
+      { id: "c-3d-1", name: "impressoras-fdm", type: "text", category: "Bancada", unread: true },
       { id: "c-3d-2", name: "filamentos-e-perfis", type: "text", category: "Bancada" },
       { id: "c-3d-v1", name: "Bancada Aberta", type: "voice", category: "Voz" },
     ],
@@ -145,6 +99,72 @@ export const INITIAL_SERVERS: PamplexServer[] = [
       { id: "c-jg-1", name: "lobby", type: "text", category: "Partidas" },
       { id: "c-jg-v1", name: "Call Ranked", type: "voice", category: "Voz" },
     ],
+  },
+];
+
+export const INITIAL_MEMBERS: PamplexMember[] = [
+  {
+    id: "u1",
+    name: "Gustavo Kriguer",
+    username: "gustavo",
+    initials: "GK",
+    status: "online",
+    role: "Fundador",
+    accentColor: "bg-pamplex-turquesa text-pamplex-dark",
+    inVoiceChannelId: "c-voice-1",
+    isSpeaking: true,
+  },
+  {
+    id: "u2",
+    name: "Ana Beatriz",
+    username: "anabia",
+    initials: "AB",
+    status: "online",
+    role: "Moderação",
+    accentColor: "bg-pamplex-esmeralda text-pamplex-dark",
+    inVoiceChannelId: "c-voice-1",
+    isSpeaking: false,
+    relation: "friend",
+    customStatus: "Testando o Design System",
+  },
+  {
+    id: "u3",
+    name: "Lucas Mendes",
+    username: "lucasm",
+    initials: "LM",
+    status: "idle",
+    accentColor: "bg-pamplex-aqua text-pamplex-dark",
+    relation: "friend",
+    customStatus: "No lobby aguardando squad",
+  },
+  {
+    id: "u4",
+    name: "Mariana Costa",
+    username: "maricosta",
+    initials: "MC",
+    status: "dnd",
+    accentColor: "bg-pamplex-menta text-pamplex-dark",
+    relation: "friend",
+    customStatus: "Focada no código",
+  },
+  {
+    id: "u5",
+    name: "Rafael Torres",
+    username: "rafatorres",
+    initials: "RT",
+    status: "offline",
+    accentColor: "bg-pamplex-elevated text-pamplex-text-secondary",
+    relation: "friend",
+  },
+  {
+    id: "u6",
+    name: "Camila Rocha",
+    username: "camilarocha",
+    initials: "CR",
+    status: "online",
+    accentColor: "bg-pamplex-turquesa text-pamplex-dark",
+    relation: "pending_incoming",
+    customStatus: "Quer entrar na comunidade",
   },
 ];
 
@@ -167,13 +187,13 @@ export const INITIAL_MESSAGES: PamplexMessage[] = [
     id: "m2",
     channelId: "c-text-2",
     authorId: "u1",
-    authorName: "Gustavo",
+    authorName: "Gustavo Kriguer",
     authorInitials: "GK",
     authorColor: "bg-pamplex-turquesa text-pamplex-dark",
     authorRole: "Fundador",
     content: "Valeu @anabia! Estamos estruturando cada detalhe do Design System e do Radar Vivo.",
     timestamp: NOW - 1000 * 60 * 4,
-    reactions: [{ emoji: "💚", count: 2, reacted: false }],
+    reactions: [{ emoji: "💚", count: 2, reacted: true }],
   },
   {
     id: "m3",
@@ -184,7 +204,7 @@ export const INITIAL_MESSAGES: PamplexMessage[] = [
     authorColor: "bg-pamplex-turquesa text-pamplex-dark",
     authorRole: "Fundador",
     content: "Repara como mensagens enviadas dentro de 5 minutos ficam agrupadas sem repetir o avatar.",
-    timestamp: NOW - 1000 * 60 * 2,
+    timestamp: NOW - 1000 * 60 * 3,
     reactions: [],
   },
   {
@@ -195,19 +215,30 @@ export const INITIAL_MESSAGES: PamplexMessage[] = [
     authorInitials: "GK",
     authorColor: "bg-pamplex-turquesa text-pamplex-dark",
     authorRole: "Fundador",
-    content: "Este é o canal oficial de boas-vindas. Respeite a comunidade e aproveite a plataforma!",
+    content: "Este é o Pamplex — comunicação rápida, organizada e sem poluição visual.",
     timestamp: NOW - 1000 * 60 * 60,
-    reactions: [{ emoji: "👋", count: 5, reacted: true }],
+    reactions: [{ emoji: "🔥", count: 5, reacted: true }],
   },
   {
-    id: "m5",
-    channelId: "c-text-3",
-    authorId: "u4",
-    authorName: "Mariana Costa",
-    authorInitials: "MC",
-    authorColor: "bg-pamplex-elevated text-pamplex-menta",
-    content: "A barra flutuante estilo Spotify na parte de baixo facilita muito controlar o microfone sem procurar ícones minúsculos.",
+    id: "dm-1",
+    channelId: "dm-u2",
+    authorId: "u2",
+    authorName: "Ana Beatriz",
+    authorInitials: "AB",
+    authorColor: "bg-pamplex-esmeralda text-pamplex-dark",
+    content: "Oi Gustavo! Testei o botão P aqui no canto e ficou muito rápido trocar entre servidor e DM.",
+    timestamp: NOW - 1000 * 60 * 8,
+    reactions: [{ emoji: "💚", count: 1, reacted: true }],
+  },
+  {
+    id: "dm-2",
+    channelId: "dm-u3",
+    authorId: "u3",
+    authorName: "Lucas Mendes",
+    authorInitials: "LM",
+    authorColor: "bg-pamplex-aqua text-pamplex-dark",
+    content: "Bora puxar uma partida mais tarde na Call Ranked?",
     timestamp: NOW - 1000 * 60 * 25,
-    reactions: [{ emoji: "🎧", count: 4, reacted: true }],
+    reactions: [],
   },
 ];

@@ -1,12 +1,15 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { Folder, FolderOpen, Plus } from "lucide-react";
 import { PamplexServer } from "./types";
 
 interface ServerRailProps {
   servers: PamplexServer[];
   activeServerId: string;
+  isHomeActive: boolean;
+  homeBadgeCount: number;
+  onSelectHome: () => void;
   onSelectServer: (serverId: string) => void;
   onOpenCreateServer: () => void;
 }
@@ -14,63 +17,92 @@ interface ServerRailProps {
 export function ServerRail({
   servers,
   activeServerId,
+  isHomeActive,
+  homeBadgeCount,
+  onSelectHome,
   onSelectServer,
   onOpenCreateServer,
 }: ServerRailProps) {
-  const [folderOpen, setFolderOpen] = useState(true);
+  const [openFolders, setOpenFolders] = useState<Record<string, boolean>>({
+    Projetos: true,
+  });
 
-  const rootServers = servers.filter((s) => !s.folder);
-  const folderServers = servers.filter((s) => Boolean(s.folder));
+  const { rootServers, folderMap } = useMemo(() => {
+    const roots: PamplexServer[] = [];
+    const folders: Record<string, PamplexServer[]> = {};
 
-  const renderServerButton = (server: PamplexServer, compact = false) => {
-    const isActive = server.id === activeServerId;
+    for (const srv of servers) {
+      if (srv.folder) {
+        if (!folders[srv.folder]) folders[srv.folder] = [];
+        folders[srv.folder].push(srv);
+      } else {
+        roots.push(srv);
+      }
+    }
+    return { rootServers: roots, folderMap: folders };
+  }, [servers]);
+
+  const toggleFolder = (folderName: string) => {
+    setOpenFolders((prev) => ({ ...prev, [folderName]: !prev[folderName] }));
+  };
+
+  const renderServerButton = (server: PamplexServer) => {
+    const isActive = !isHomeActive && server.id === activeServerId;
 
     return (
-      <div key={server.id} className="relative flex items-center justify-center group">
-        {/* Indicador lateral de servidor ativo */}
+      <div key={server.id} className="relative flex w-full items-center justify-center">
+        {/* Indicador lateral ativo */}
         <span
           className={[
             "absolute left-0 w-1 rounded-r-full bg-pamplex-turquesa transition-all duration-150",
-            isActive
-              ? "h-8 opacity-100"
-              : "h-2 opacity-0 group-hover:h-4 group-hover:opacity-70",
+            isActive ? "h-8 opacity-100" : "h-0 opacity-0",
           ].join(" ")}
         />
 
         <button
           type="button"
           onClick={() => onSelectServer(server.id)}
-          title={server.name}
+          title={`${server.name}${server.hasActiveVoice ? " • Voz ativa" : ""}`}
           className={[
-            "relative flex items-center justify-center font-semibold transition-all duration-150 cursor-pointer select-none",
-            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pamplex-turquesa",
-            compact ? "h-10 w-10 text-xs" : "h-12 w-12 text-sm",
+            "group relative flex h-12 w-12 items-center justify-center font-semibold text-sm transition-all duration-150 cursor-pointer select-none",
             isActive
-              ? "rounded-[14px] bg-pamplex-turquesa text-pamplex-dark shadow-md shadow-pamplex-turquesa/20"
-              : "rounded-[16px] bg-pamplex-surface text-pamplex-text-primary hover:rounded-[14px] hover:bg-pamplex-elevated",
+              ? "rounded-[14px] bg-pamplex-turquesa text-pamplex-dark shadow-md"
+              : "rounded-[18px] bg-pamplex-surface text-pamplex-text-primary hover:rounded-[14px] hover:bg-pamplex-elevated",
             server.hasActiveVoice && !isActive
-              ? server.isSpeakingNow
-                ? "ring-2 ring-pamplex-esmeralda animate-radar-vivo"
-                : "ring-1 ring-pamplex-esmeralda/60"
+              ? "ring-2 ring-pamplex-esmeralda/80"
               : "",
           ].join(" ")}
         >
-          {server.initials}
+          <span>{server.initials}</span>
 
-          {/* Micro-avatares do Radar Vivo */}
-          {server.hasActiveVoice && server.activeSpeakersInitials.length > 0 && (
-            <div className="absolute -bottom-1 -right-1 flex -space-x-1.5 pointer-events-none">
-              {server.activeSpeakersInitials.slice(0, 2).map((init, idx) => (
+          {/* Radar Vivo: ponto pulsante quando há alguém falando */}
+          {server.hasActiveVoice && (
+            <span
+              className={[
+                "absolute -top-1 -right-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-pamplex-dark",
+              ].join(" ")}
+            >
+              <span
+                className={[
+                  "h-2.5 w-2.5 rounded-full bg-pamplex-esmeralda",
+                  server.isSpeakingNow ? "animate-ping" : "",
+                ].join(" ")}
+              />
+              {server.isSpeakingNow && (
+                <span className="absolute h-2.5 w-2.5 rounded-full bg-pamplex-esmeralda" />
+              )}
+            </span>
+          )}
+
+          {/* Micro-avatares de quem está em call agora */}
+          {server.activeSpeakersInitials.length > 0 && (
+            <div className="absolute -bottom-1.5 flex -space-x-1.5">
+              {server.activeSpeakersInitials.slice(0, 2).map((initials) => (
                 <span
-                  key={`${server.id}-spk-${idx}`}
-                  className={[
-                    "flex h-4 w-4 items-center justify-center rounded-full text-[9px] font-bold ring-2 ring-pamplex-dark",
-                    idx === 0
-                      ? "bg-pamplex-esmeralda text-pamplex-dark"
-                      : "bg-pamplex-turquesa text-pamplex-dark",
-                  ].join(" ")}
+                  key={initials}
+                  className="flex h-4 w-4 items-center justify-center rounded-full border border-pamplex-dark bg-pamplex-floresta text-[8px] font-bold text-pamplex-menta"
                 >
-                  {init}
+                  {initials}
                 </span>
               ))}
             </div>
@@ -81,57 +113,90 @@ export function ServerRail({
   };
 
   return (
-    <aside
+    <nav
       aria-label="Servidores"
-      className="flex h-full w-[72px] shrink-0 flex-col items-center bg-pamplex-dark border-r border-pamplex-border py-3 gap-2 select-none"
+      className="flex h-full w-[72px] shrink-0 flex-col items-center border-r border-pamplex-border bg-pamplex-dark py-3 gap-2 select-none"
     >
-      {/* Logo Pamplex / Início */}
-      <button
-        type="button"
-        onClick={() => onSelectServer("s1")}
-        title="Início • Pamplex"
-        className="flex h-12 w-12 items-center justify-center rounded-[14px] bg-pamplex-floresta-bg border border-pamplex-turquesa/30 text-pamplex-turquesa font-bold text-lg transition-all hover:bg-pamplex-turquesa hover:text-pamplex-dark cursor-pointer"
-      >
-        P
-      </button>
+      {/* Botão P (Início / Mensagens Diretas e Amigos) */}
+      <div className="relative flex w-full items-center justify-center">
+        <span
+          className={[
+            "absolute left-0 w-1 rounded-r-full bg-pamplex-turquesa transition-all duration-150",
+            isHomeActive ? "h-8 opacity-100" : "h-0 opacity-0",
+          ].join(" ")}
+        />
 
-      <div className="h-[1px] w-8 bg-pamplex-border my-1" />
+        <button
+          type="button"
+          onClick={onSelectHome}
+          title="Início • Mensagens Diretas e Amigos"
+          className={[
+            "relative flex h-12 w-12 items-center justify-center font-bold text-base tracking-tight transition-all duration-150 cursor-pointer",
+            isHomeActive
+              ? "rounded-[14px] bg-pamplex-turquesa text-pamplex-dark shadow-md"
+              : "rounded-[18px] bg-pamplex-surface text-pamplex-turquesa hover:rounded-[14px] hover:bg-pamplex-turquesa hover:text-pamplex-dark",
+          ].join(" ")}
+        >
+          P
 
-      {/* Lista de servidores principais */}
-      <div className="flex flex-1 flex-col items-center gap-2.5 overflow-y-auto w-full py-1">
-        {rootServers.map((server) => renderServerButton(server))}
+          {homeBadgeCount > 0 && (
+            <span className="absolute -bottom-1 -right-1 flex h-5 min-w-5 items-center justify-center rounded-full border-2 border-pamplex-dark bg-pamplex-esmeralda px-1 text-[10px] font-bold text-pamplex-dark">
+              {homeBadgeCount}
+            </span>
+          )}
+        </button>
+      </div>
 
-        {/* Pasta agrupada de servidores */}
-        {folderServers.length > 0 && (
-          <div className="flex flex-col items-center gap-2 rounded-[14px] bg-pamplex-sidebar/90 border border-pamplex-border/70 p-1.5">
-            <button
-              type="button"
-              onClick={() => setFolderOpen((prev) => !prev)}
-              title={folderOpen ? "Recolher pasta Projetos" : "Expandir pasta Projetos"}
-              className="flex h-9 w-9 items-center justify-center rounded-[10px] text-pamplex-aqua hover:bg-pamplex-elevated transition-colors cursor-pointer"
+      <div className="h-px w-8 bg-pamplex-border my-1" />
+
+      {/* Lista de Servidores e Pastas */}
+      <div className="flex w-full flex-1 flex-col items-center gap-2.5 overflow-y-auto pb-24">
+        {rootServers.map(renderServerButton)}
+
+        {Object.entries(folderMap).map(([folderName, items]) => {
+          const isOpen = Boolean(openFolders[folderName]);
+          const folderHasVoice = items.some((s) => s.hasActiveVoice);
+
+          return (
+            <div
+              key={folderName}
+              className="flex flex-col items-center gap-2 rounded-[16px] bg-pamplex-surface/60 p-1.5 border border-pamplex-border/60"
             >
-              {folderOpen ? (
-                <FolderOpen className="h-4 w-4" />
-              ) : (
-                <Folder className="h-4 w-4" />
-              )}
-            </button>
+              <button
+                type="button"
+                onClick={() => toggleFolder(folderName)}
+                title={`Pasta ${folderName}`}
+                className="relative flex h-9 w-9 items-center justify-center rounded-[10px] text-pamplex-text-secondary hover:bg-pamplex-elevated hover:text-pamplex-turquesa transition-colors cursor-pointer"
+              >
+                {isOpen ? (
+                  <FolderOpen className="h-4 w-4 text-pamplex-turquesa" />
+                ) : (
+                  <Folder className="h-4 w-4" />
+                )}
+                {!isOpen && folderHasVoice && (
+                  <span className="absolute top-1 right-1 h-2 w-2 rounded-full bg-pamplex-esmeralda" />
+                )}
+              </button>
 
-            {folderOpen &&
-              folderServers.map((server) => renderServerButton(server, true))}
-          </div>
-        )}
+              {isOpen && (
+                <div className="flex flex-col items-center gap-2">
+                  {items.map(renderServerButton)}
+                </div>
+              )}
+            </div>
+          );
+        })}
 
         {/* Botão Criar Novo Servidor */}
         <button
           type="button"
           onClick={onOpenCreateServer}
-          title="Criar ou entrar em servidor"
-          className="flex h-12 w-12 items-center justify-center rounded-[16px] bg-pamplex-surface border border-dashed border-pamplex-border text-pamplex-esmeralda transition-all hover:rounded-[14px] hover:border-pamplex-esmeralda hover:bg-pamplex-floresta-bg cursor-pointer"
+          title="Criar novo servidor"
+          className="flex h-12 w-12 items-center justify-center rounded-[18px] border border-dashed border-pamplex-border bg-pamplex-surface/50 text-pamplex-turquesa hover:rounded-[14px] hover:border-pamplex-turquesa hover:bg-pamplex-turquesa/10 transition-all cursor-pointer"
         >
           <Plus className="h-5 w-5" />
         </button>
       </div>
-    </aside>
+    </nav>
   );
 }
