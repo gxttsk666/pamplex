@@ -38,6 +38,27 @@ type ServerModalTab = "create" | "join";
 const AUTHOR_COLOR = "bg-pamplex-turquesa text-pamplex-dark";
 const IMAGE_URL_REGEX = /https?:\/\/[^\s]+\.(?:png|jpe?g|gif|webp|avif)(?:\?[^\s]*)?/i;
 
+function getLastReadStorageKey(userId: string) {
+  return `pamplex_dm_last_read_${userId}`;
+}
+
+function readLastReadMap(userId: string): Record<string, number> {
+  try {
+    const raw = window.localStorage.getItem(getLastReadStorageKey(userId));
+    return raw ? (JSON.parse(raw) as Record<string, number>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeLastReadMap(userId: string, map: Record<string, number>) {
+  try {
+    window.localStorage.setItem(getLastReadStorageKey(userId), JSON.stringify(map));
+  } catch {
+    // Ignora caso localStorage esteja bloqueado
+  }
+}
+
 function playNotificationTone() {
   try {
     const AudioCtx =
@@ -101,18 +122,14 @@ export default function PamplexApp() {
   const [isMuted, setIsMuted] = useState(false);
   const [isDeafened, setIsDeafened] = useState(false);
 
-  // Não-lidas por DM
-  const [unreadByUserId, setUnreadByUserId] = useState<Record<string, number>>({});
-  const activeDmRef = useRef<string | null>(null);
-  const isHomeActiveRef = useRef(false);
+  // Persistência de leitura por DM (sobrevive ao F5)
+  const [lastReadByUserId, setLastReadByUserId] = useState<Record<string, number>>({});
+  const [lastReadLoaded, setLastReadLoaded] = useState(false);
 
   // Indicador "está digitando..."
   const [typingUsers, setTypingUsers] = useState<string[]>([]);
   const typingChannelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
   const lastTypingSentRef = useRef<number>(0);
-
-  activeDmRef.current = activeDmUserId;
-  isHomeActiveRef.current = isHomeActive;
 
   // 1. Restaura e persiste a posição de navegação
   useEffect(() => {
@@ -135,6 +152,30 @@ export default function PamplexApp() {
       activeDmUserId,
     });
   }, [navRestored, isHomeActive, activeServerId, activeChannelId, activeDmUserId]);
+
+  // Carrega timestamps de leitura ao autenticar
+  useEffect(() => {
+    if (!user) {
+      setLastReadByUserId({});
+      setLastReadLoaded(false);
+      return;
+    }
+    setLastReadByUserId(readLastReadMap(user.id));
+    setLastReadLoaded(true);
+  }, [user]);
+
+  const markDmAsRead = useCallback(
+    (otherUserId: string, timestamp = Date.now()) => {
+      if (!user) return;
+      setLastReadByUserId((prev) => {
+        if ((prev[otherUserId] ?? 0) >= timestamp) return prev;
+        const next = { ...prev, [otherUserId]: timestamp };
+        writeLastReadMap(user.id, next);
+        return next;
+      });
+    },
+    [user]
+  );
 
   // 2. Abre o login quando não há sessão
   useEffect(() => {
@@ -200,7 +241,7 @@ export default function PamplexApp() {
     return map;
   }, [members]);
 
-  // Prévia e timestamp da última mensagem de cada DM (para ordenar a DirectSidebar)
+  // Prévia e timestamp da última mensagem de cada DM
   const lastDmByUserId = useMemo<Record<string, DmPreview>>(() => {
     if (!user) return {};
     const result: Record<string, DmPreview> = {};
@@ -312,10 +353,43 @@ export default function PamplexApp() {
     [members]
   );
 
+  // Calcula não-lidas comparando com o lastRead salvo no localStorage
+  const unreadByUserId = useMemo<Record<string, number>>(() => {
+    if (!user || !lastReadLoaded) return {};
+    const counts: Record<string, number> = {};
+
+    for (const msg of messages) {
+      if (msg.authorId === user.id) continue;
+      const pair = parseDmChannelId(msg.channelId);
+      if (!pair) continue;
+
+      const otherId =
+        pair[0] === user.id ? pair[1] : pair[1] === user.id ? pair[0] : null;
+      if (!otherId) continue;
+
+      // Se a DM já está aberta na tela, não conta como não-lida
+      if (isHomeActive && activeDmUserId === otherId) continue;
+
+      const lastRead = lastReadByUserId[otherId] ?? 0;
+      if (msg.timestamp > lastRead) {
+        counts[otherId] = (counts[otherId] ?? 0) + 1;
+      }
+    }
+
+    return counts;
+  }, [user, lastReadLoaded, messages, isHomeActive, activeDmUserId, lastReadByUserId]);
+
   const totalUnreadDms = useMemo(
     () => Object.values(unreadByUserId).reduce((total, count) => total + count, 0),
     [unreadByUserId]
   );
+
+  // Sempre que estiver vendo uma DM e chegarem mensagens nela, atualiza o timestamp como lido
+  useEffect(() => {
+    if (!user || !lastReadLoaded || !isHomeActive || !activeDmUserId) return;
+    const latestInDm = channelMessages[channelMessages.length - 1]?.timestamp ?? Date.now();
+    markDmAsRead(activeDmUserId, Math.max(latestInDm, Date.now()));
+  }, [user, lastReadLoaded, isHomeActive, activeDmUserId, channelMessages, markDmAsRead]);
 
   const connectedVoiceInfo = useMemo(() => {
     if (!connectedVoiceChannelId) return null;
@@ -382,40 +456,8 @@ export default function PamplexApp() {
   }, [user, currentUserProfile.name]);
 
   /* ---------------------------------------------------------------------- */
-  /* Contador de não-lidas e som de notificação                              */
+  /* Som apenas para mensagens recebidas em tempo real                       */
   /* ---------------------------------------------------------------------- */
-
-  const countUnreadAndNotify = useCallback(
-    (message: PamplexMessage, viewerId: string, isInitialLoad: boolean) => {
-      if (message.authorId === viewerId) return;
-
-      const pair = parseDmChannelId(message.channelId);
-      const isCurrentChannelOpen =
-        document.visibilityState === "visible" &&
-        currentChatChannel?.id === message.channelId;
-
-      if (!isInitialLoad && !isCurrentChannelOpen) {
-        playNotificationTone();
-      }
-
-      if (!pair) return;
-
-      const otherId = pair[0] === viewerId ? pair[1] : pair[0];
-      if (!otherId || otherId === viewerId) return;
-
-      const isDmOpen =
-        isHomeActiveRef.current &&
-        activeDmRef.current === otherId &&
-        document.visibilityState === "visible";
-      if (isDmOpen) return;
-
-      setUnreadByUserId((prev) => ({
-        ...prev,
-        [otherId]: (prev[otherId] ?? 0) + 1,
-      }));
-    },
-    [currentChatChannel?.id]
-  );
 
   const seenMessageIdsRef = useRef<Set<string>>(new Set());
   const initialMessagesLoadedRef = useRef(false);
@@ -427,21 +469,27 @@ export default function PamplexApp() {
     for (const message of messages) {
       if (seenMessageIdsRef.current.has(message.id)) continue;
       seenMessageIdsRef.current.add(message.id);
-      countUnreadAndNotify(message, user.id, isInitial);
+
+      if (!isInitial && message.authorId !== user.id) {
+        const isCurrentChannelOpen =
+          document.visibilityState === "visible" &&
+          currentChatChannel?.id === message.channelId;
+        if (!isCurrentChannelOpen) {
+          playNotificationTone();
+        }
+      }
     }
     initialMessagesLoadedRef.current = true;
-  }, [messages, user, countUnreadAndNotify]);
+  }, [messages, user, currentChatChannel?.id]);
 
-  const openDm = useCallback((userId: string) => {
-    setIsHomeActive(true);
-    setActiveDmUserId(userId);
-    setUnreadByUserId((prev) => {
-      if (!prev[userId]) return prev;
-      const next = { ...prev };
-      delete next[userId];
-      return next;
-    });
-  }, []);
+  const openDm = useCallback(
+    (userId: string) => {
+      setIsHomeActive(true);
+      setActiveDmUserId(userId);
+      markDmAsRead(userId, Date.now());
+    },
+    [markDmAsRead]
+  );
 
   /* ---------------------------------------------------------------------- */
   /* Handlers                                                                */
@@ -775,7 +823,6 @@ export default function PamplexApp() {
   };
 
   const handleLogout = async () => {
-    setUnreadByUserId({});
     seenMessageIdsRef.current.clear();
     initialMessagesLoadedRef.current = false;
     await supabase.auth.signOut();
