@@ -21,7 +21,6 @@ function VoiceRoomInner({ onDisconnect }: { onDisconnect: () => void }) {
   const { localParticipant } = useLocalParticipant();
   const [isMuted, setIsMuted] = useState(false);
 
-  // Monitora mudanças no estado do microfone para tocar mute/unmute localmente
   useEffect(() => {
     if (!localParticipant) return;
     const checkMicrophone = () => {
@@ -60,7 +59,7 @@ function VoiceRoomInner({ onDisconnect }: { onDisconnect: () => void }) {
       </div>
 
       <RoomAudioRenderer />
-      
+
       <div className="flex items-center justify-center gap-2 pt-1">
         <ControlBar variation="minimal" />
       </div>
@@ -70,13 +69,12 @@ function VoiceRoomInner({ onDisconnect }: { onDisconnect: () => void }) {
 
 export function VoiceRoomModal({ roomName, username, onDisconnect }: VoiceRoomModalProps) {
   const [token, setToken] = useState<string | null>(null);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const supabase = useMemo(() => createClient(), []);
 
   useEffect(() => {
     let active = true;
-
-    // Toca o som de Digital Connect assim que entra na sala
-    playDigitalConnect();
+    setErrorMsg(null);
 
     const fetchToken = async () => {
       try {
@@ -92,14 +90,17 @@ export function VoiceRoomModal({ roomName, username, onDisconnect }: VoiceRoomMo
 
         if (!active) return;
         if (!res.ok || !data.token) {
-          console.error("Erro ao obter token LiveKit:", data.error ?? res.status);
-          onDisconnect();
+          const msg = data.error ?? `Erro HTTP ${res.status}`;
+          console.error("Erro ao obter token LiveKit:", msg);
+          setErrorMsg(msg);
           return;
         }
+
+        playDigitalConnect();
         setToken(data.token);
       } catch (err) {
         console.error("Erro ao obter token LiveKit:", err);
-        if (active) onDisconnect();
+        if (active) setErrorMsg("Falha de rede ao conectar no servidor de voz.");
       }
     };
 
@@ -107,9 +108,24 @@ export function VoiceRoomModal({ roomName, username, onDisconnect }: VoiceRoomMo
     return () => {
       active = false;
     };
-    // onDisconnect muda a cada render do pai; só queremos refazer o token ao trocar de sala
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roomName, username, supabase]);
+
+  if (errorMsg) {
+    return (
+      <div className="fixed bottom-20 right-5 z-50 flex flex-col gap-2 rounded-xl border border-red-500/40 bg-pamplex-surface p-4 shadow-2xl w-80 text-xs">
+        <span className="font-bold text-red-400">Não foi possível entrar na chamada</span>
+        <p className="text-pamplex-text-secondary">{errorMsg}</p>
+        <button
+          type="button"
+          onClick={onDisconnect}
+          className="mt-1 self-end rounded-md bg-red-500/20 px-3 py-1 text-red-300 hover:bg-red-500/30 cursor-pointer"
+        >
+          Fechar
+        </button>
+      </div>
+    );
+  }
 
   if (!token) {
     return (
@@ -127,6 +143,10 @@ export function VoiceRoomModal({ roomName, username, onDisconnect }: VoiceRoomMo
         audio={true}
         token={token}
         serverUrl={process.env.NEXT_PUBLIC_LIVEKIT_URL}
+        onError={(err) => {
+          console.error("Erro LiveKitRoom:", err);
+          setErrorMsg(err.message);
+        }}
         onDisconnected={() => {
           playDigitalDisconnect();
           onDisconnect();
