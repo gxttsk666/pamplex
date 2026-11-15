@@ -44,6 +44,12 @@ export interface MessageReaction {
   reacted: boolean;
 }
 
+export interface MessageReplyInfo {
+  id: string;
+  authorName: string;
+  content: string;
+}
+
 export interface PamplexMessage {
   id: string;
   channelId: string;
@@ -55,6 +61,7 @@ export interface PamplexMessage {
   content: string;
   timestamp: number;
   reactions: MessageReaction[];
+  replyTo?: MessageReplyInfo;
 }
 
 export const INITIAL_SERVERS: PamplexServer[] = [
