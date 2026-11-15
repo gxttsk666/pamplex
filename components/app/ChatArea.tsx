@@ -65,19 +65,27 @@ function renderTextWithMentions(text: string) {
 }
 
 function renderMessageBody(content: string, onImageLoad?: () => void) {
-  // Limpa marcações antigas e o prefixo [reply:...] para exibir apenas o texto real da mensagem
   let cleanContent = content;
+
+  // Remove formato novo [reply:...]
   if (cleanContent.startsWith("[reply:")) {
     const endIdx = cleanContent.indexOf("]");
     if (endIdx !== -1) {
       cleanContent = cleanContent.slice(endIdx + 1).trim();
     }
   }
-  cleanContent = cleanContent
-    .split("\n")
-    .filter((line) => !line.startsWith("> **@"))
-    .join("\n")
-    .trim();
+
+  // Remove formatos antigos legados de citação que poluem o texto
+  const lines = cleanContent.split("\n").filter((line) => {
+    const trimmed = line.trim();
+    return !(
+      trimmed.startsWith("> **@") ||
+      trimmed.startsWith("> **") ||
+      (trimmed.startsWith(">") && trimmed.includes(":"))
+    );
+  });
+
+  cleanContent = lines.join("\n").trim();
 
   const imageMatches = cleanContent.match(IMAGE_URL_REGEX) ?? [];
   const textWithoutImages = cleanContent.replace(IMAGE_URL_REGEX, "").trim();
@@ -353,7 +361,7 @@ export function ChatArea({
                   </div>
                 )}
 
-                {/* Bloco de Citação Estilo Discord (Borda Curvada à Esquerda) */}
+                {/* Bloco de Citação Estilo Discord */}
                 {msg.replyTo && (
                   <div className="mb-1.5 flex items-center gap-2 text-xs text-pamplex-text-muted">
                     <div className="relative flex items-center">
