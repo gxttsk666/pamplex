@@ -8,6 +8,7 @@ import type {
   PamplexMessage,
   PamplexServer,
   PamplexChannel,
+  MessageReplyInfo,
 } from "@/components/app/types";
 import {
   asRow,
@@ -64,6 +65,50 @@ interface UsePamplexDataResult {
 
 function profileDisplayName(profile: ProfileLike): string {
   return profile.display_name || profile.username || "Membro";
+}
+
+// Função auxiliar para analisar e extrair o replyTo e o conteúdo limpo
+function parseMessageContentAndReply(rawContent: string): {
+  content: string;
+  replyTo?: MessageReplyInfo;
+} {
+  let content = rawContent ?? "";
+  let replyTo: MessageReplyInfo | undefined = undefined;
+
+  if (content.startsWith("[reply:")) {
+    const closeBracketIdx = content.indexOf("]");
+    if (closeBracketIdx !== -1) {
+      const header = content.slice(7, closeBracketIdx);
+      const parts = header.split(":");
+      const replyId = parts[0];
+      const replyAuthor = parts[1];
+      const replyText = parts.slice(2).join(":");
+
+      replyTo = {
+        id: replyId,
+        authorName: replyAuthor,
+        content: replyText,
+      };
+
+      content = content.slice(closeBracketIdx + 1).trim();
+    }
+  }
+
+  // Remove vestígios legados de citação se houver
+  content = content
+    .split("\n")
+    .filter((line) => {
+      const trimmed = line.trim();
+      return !(
+        trimmed.startsWith("> **@") ||
+        trimmed.startsWith("> **") ||
+        (trimmed.startsWith(">") && trimmed.includes(":"))
+      );
+    })
+    .join("\n")
+    .trim();
+
+  return { content, replyTo };
 }
 
 function formatServer(row: ServerRowWithChannels): PamplexServer {
@@ -259,6 +304,7 @@ export function usePamplexData(): UsePamplexDataResult {
     setMessages(
       asRows<MessageRow>(data).map((row) => {
         const authorName = authorNames.get(row.author_id) || "Membro";
+        const { content, replyTo } = parseMessageContentAndReply(row.content);
         return {
           id: row.id,
           channelId: row.channel_id,
@@ -266,9 +312,10 @@ export function usePamplexData(): UsePamplexDataResult {
           authorName,
           authorInitials: authorName.slice(0, 2).toUpperCase(),
           authorColor: AUTHOR_COLOR,
-          content: row.content,
+          content,
           timestamp: new Date(row.created_at).getTime(),
           reactions: [],
+          replyTo,
         };
       })
     );
@@ -318,10 +365,11 @@ export function usePamplexData(): UsePamplexDataResult {
 
   const upsertMessage = useCallback((row: MessageRow, authorName: string) => {
     setMessages((prev) => {
+      const { content, replyTo } = parseMessageContentAndReply(row.content);
       const exists = prev.some((m) => m.id === row.id);
       if (exists) {
         return prev.map((m) =>
-          m.id === row.id ? { ...m, content: row.content } : m
+          m.id === row.id ? { ...m, content, replyTo } : m
         );
       }
       return [
@@ -333,9 +381,10 @@ export function usePamplexData(): UsePamplexDataResult {
           authorName,
           authorInitials: authorName.slice(0, 2).toUpperCase(),
           authorColor: AUTHOR_COLOR,
-          content: row.content,
+          content,
           timestamp: new Date(row.created_at).getTime(),
           reactions: [],
+          replyTo,
         },
       ];
     });
@@ -401,10 +450,11 @@ export function usePamplexData(): UsePamplexDataResult {
         (payload) => {
           const updated = (payload.new ?? {}) as Record<string, unknown>;
           const id = String(updated.id ?? "");
-          const content = String(updated.content ?? "");
+          const rawContent = String(updated.content ?? "");
           if (!id) return;
+          const { content, replyTo } = parseMessageContentAndReply(rawContent);
           setMessages((prev) =>
-            prev.map((m) => (m.id === id ? { ...m, content } : m))
+            prev.map((m) => (m.id === id ? { ...m, content, replyTo } : m))
           );
         }
       )
