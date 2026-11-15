@@ -14,6 +14,8 @@ import { PamplexChannel, PamplexMessage } from "./types";
 interface ChatAreaProps {
   channel: PamplexChannel;
   messages: PamplexMessage[];
+  /** Username do utilizador atual, usado para destacar menções reais. */
+  currentUserUsername: string;
   showMembers: boolean;
   onToggleMembers: () => void;
   onSendMessage: (content: string) => void;
@@ -50,6 +52,7 @@ function renderMessageContent(content: string) {
 export function ChatArea({
   channel,
   messages,
+  currentUserUsername,
   showMembers,
   onToggleMembers,
   onSendMessage,
@@ -126,7 +129,9 @@ export function ChatArea({
             prev.authorId === msg.authorId &&
             msg.timestamp - prev.timestamp <= FIVE_MINUTES_MS;
 
-          const mentionsCurrentUser = msg.content.toLowerCase().includes("@gustavo");
+          const mentionsCurrentUser = currentUserUsername
+            ? msg.content.toLowerCase().includes(`@${currentUserUsername.toLowerCase()}`)
+            : false;
 
           return (
             <div
@@ -268,7 +273,7 @@ export function ChatArea({
             type="text"
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
-            placeholder={`Conversar em #${channel.name}... (use @gustavo para testar menção)`}
+            placeholder={`Conversar em #${channel.name}...`}
             className="flex-1 bg-transparent text-sm text-pamplex-text-primary placeholder:text-pamplex-text-muted focus:outline-none"
           />
 
