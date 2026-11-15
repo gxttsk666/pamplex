@@ -87,7 +87,7 @@ export function AuthModal({ isOpen, onClose, onSuccess }: AuthModalProps) {
                   required
                   value={displayName}
                   onChange={(e) => setDisplayName(e.target.value)}
-                  placeholder="Ex: Gustavo Kriguer"
+                  placeholder="Ex: Gustavo"
                   className="w-full rounded-lg bg-zinc-950 border border-zinc-800 px-3 py-2 text-white focus:outline-none focus:border-teal-400"
                 />
               </div>
@@ -101,7 +101,7 @@ export function AuthModal({ isOpen, onClose, onSuccess }: AuthModalProps) {
                   required
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
-                  placeholder="Ex: gustavo"
+                  placeholder="Ex: gxttsk666"
                   className="w-full rounded-lg bg-zinc-950 border border-zinc-800 px-3 py-2 text-white focus:outline-none focus:border-teal-400"
                 />
               </div>

@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { LogOut, Plus, UserPlus } from "lucide-react";
+import { LogOut, Plus, UserPlus, Phone, Video } from "lucide-react";
 import { AuthModal } from "@/components/auth/AuthModal";
 import { ServerRail } from "@/components/app/ServerRail";
 import { ChannelSidebar } from "@/components/app/ChannelSidebar";
@@ -10,6 +10,7 @@ import { FriendsView } from "@/components/app/FriendsView";
 import { ChatArea } from "@/components/app/ChatArea";
 import { MemberList } from "@/components/app/MemberList";
 import { FloatingDock } from "@/components/app/FloatingDock";
+import { VoiceRoomModal } from "@/components/app/VoiceRoomModal";
 import { ChannelModal, InviteModal, ServerModal } from "@/components/app/PamplexModals";
 import type {
   PamplexChannel,
@@ -118,8 +119,9 @@ export default function PamplexApp() {
   const [channelModalOpen, setChannelModalOpen] = useState(false);
   const [inviteModalOpen, setInviteModalOpen] = useState(false);
 
-  // Áudio
+  // Áudio / LiveKit
   const [connectedVoiceChannelId, setConnectedVoiceChannelId] = useState<string | null>(null);
+  const [activeCallRoom, setActiveCallRoom] = useState<string | null>(null);
   const [isMuted, setIsMuted] = useState(false);
   const [isDeafened, setIsDeafened] = useState(false);
 
@@ -775,6 +777,7 @@ export default function PamplexApp() {
 
   const handleDisconnectVoice = () => {
     setConnectedVoiceChannelId(null);
+    setActiveCallRoom(null);
     setIsMuted(false);
     setIsDeafened(false);
   };
@@ -853,20 +856,37 @@ export default function PamplexApp() {
             />
           ) : (
             currentChatChannel && (
-              <ChatArea
-                channel={currentChatChannel}
-                messages={channelMessages}
-                currentUserId={user.id}
-                currentUserUsername={currentUserProfile.username}
-                typingUsers={typingUsers}
-                showMembers={!isHomeActive && showMembers}
-                onToggleMembers={() => setShowMembers((prev) => !prev)}
-                onSendMessage={handleSendMessage}
-                onEditMessage={handleEditMessage}
-                onDeleteMessage={handleDeleteMessage}
-                onToggleReaction={handleToggleReaction}
-                onTyping={handleTyping}
-              />
+              <div className="relative flex flex-1 flex-col h-full overflow-hidden">
+                {/* Botões de Chamada em DMs no Topo */}
+                {isHomeActive && activeDmFriend && (
+                  <div className="absolute right-4 top-3 z-20 flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setActiveCallRoom(`dm-${[user.id, activeDmFriend.id].sort().join("-")}`)}
+                      title="Iniciar chamada de voz"
+                      className="flex items-center gap-1.5 rounded-lg border border-teal-400/30 bg-teal-400/10 px-3 py-1.5 text-xs font-medium text-teal-300 backdrop-blur-md transition hover:bg-teal-400/20 cursor-pointer"
+                    >
+                      <Phone className="h-3.5 w-3.5" />
+                      Ligar
+                    </button>
+                  </div>
+                )}
+
+                <ChatArea
+                  channel={currentChatChannel}
+                  messages={channelMessages}
+                  currentUserId={user.id}
+                  currentUserUsername={currentUserProfile.username}
+                  typingUsers={typingUsers}
+                  showMembers={!isHomeActive && showMembers}
+                  onToggleMembers={() => setShowMembers((prev) => !prev)}
+                  onSendMessage={handleSendMessage}
+                  onEditMessage={handleEditMessage}
+                  onDeleteMessage={handleDeleteMessage}
+                  onToggleReaction={handleToggleReaction}
+                  onTyping={handleTyping}
+                />
+              </div>
             )
           )}
 
@@ -874,14 +894,22 @@ export default function PamplexApp() {
 
           <FloatingDock
             currentUser={currentUserProfile}
-            connectedChannelName={connectedVoiceInfo?.channelName ?? null}
-            connectedServerName={connectedVoiceInfo?.serverName ?? null}
+            connectedChannelName={connectedVoiceInfo?.channelName ?? (activeCallRoom ? "Chamada Privada" : null)}
+            connectedServerName={connectedVoiceInfo?.serverName ?? (activeCallRoom ? activeDmFriend?.name ?? "DM" : null)}
             isMuted={isMuted}
             isDeafened={isDeafened}
             onToggleMute={() => setIsMuted((prev) => !prev)}
             onToggleDeafen={handleToggleDeafen}
             onDisconnectVoice={handleDisconnectVoice}
           />
+
+          {(connectedVoiceChannelId || activeCallRoom) && (
+            <VoiceRoomModal
+              roomName={connectedVoiceChannelId ?? activeCallRoom!}
+              username={currentUserProfile.name}
+              onDisconnect={handleDisconnectVoice}
+            />
+          )}
 
           <div className="fixed bottom-4 right-4 z-40 flex items-center gap-2">
             {!isHomeActive && activeServer && (
