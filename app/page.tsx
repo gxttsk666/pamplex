@@ -1,7 +1,9 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
-import { Copy, Check, Hash, Sparkles } from "lucide-react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { Copy, Check, Hash, Sparkles, LogOut, Plus, UserPlus, Volume2 } from "lucide-react";
+import { createClient } from "@/lib/supabase/client";
+import { AuthModal } from "@/components/auth/AuthModal";
 import { ServerRail } from "@/components/app/ServerRail";
 import { ChannelSidebar } from "@/components/app/ChannelSidebar";
 import { DirectSidebar } from "@/components/app/DirectSidebar";
@@ -10,9 +12,6 @@ import { ChatArea } from "@/components/app/ChatArea";
 import { MemberList } from "@/components/app/MemberList";
 import { FloatingDock } from "@/components/app/FloatingDock";
 import {
-  INITIAL_MEMBERS,
-  INITIAL_MESSAGES,
-  INITIAL_SERVERS,
   PamplexChannel,
   PamplexMember,
   PamplexMessage,
@@ -23,33 +22,373 @@ import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 
 export default function PamplexApp() {
-  const [servers, setServers] = useState<PamplexServer[]>(INITIAL_SERVERS);
-  const [isHomeActive, setIsHomeActive] = useState<boolean>(false);
-  const [activeServerId, setActiveServerId] = useState<string>("s1");
-  const [activeChannelId, setActiveChannelId] = useState<string>("c-text-2");
-  const [activeDmUserId, setActiveDmUserId] = useState<string | null>(null);
-  const [connectedVoiceChannelId, setConnectedVoiceChannelId] = useState<string | null>("c-voice-1");
+  const supabase = useMemo(() => createClient(), []);
+  const [user, setUser] = useState<any>(null);
+  const [authLoading, setAuthLoading] = useState<boolean>(true);
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
 
-  const [members, setMembers] = useState<PamplexMember[]>(INITIAL_MEMBERS);
-  const [messages, setMessages] = useState<PamplexMessage[]>(INITIAL_MESSAGES);
-  const [unreadByUserId, setUnreadByUserId] = useState<Record<string, number>>({ u2: 1 });
+  const [servers, setServers] = useState<PamplexServer[]>([]);
+  const [isHomeActive, setIsHomeActive] = useState<boolean>(false);
+  const [activeServerId, setActiveServerId] = useState<string>("");
+  const [activeChannelId, setActiveChannelId] = useState<string>("");
+  const [activeDmUserId, setActiveDmUserId] = useState<string | null>(null);
+  const [connectedVoiceChannelId, setConnectedVoiceChannelId] = useState<string | null>(null);
+  const [navRestored, setNavRestored] = useState<boolean>(false);
+
+  const [members, setMembers] = useState<PamplexMember[]>([]);
+  const [messages, setMessages] = useState<PamplexMessage[]>([]);
+  const [unreadByUserId, setUnreadByUserId] = useState<Record<string, number>>({});
   const [showMembers, setShowMembers] = useState<boolean>(true);
 
   const [isMuted, setIsMuted] = useState<boolean>(false);
   const [isDeafened, setIsDeafened] = useState<boolean>(false);
 
+  // Modal Criar ou Entrar em Servidor
   const [createServerOpen, setCreateServerOpen] = useState<boolean>(false);
+  const [serverModalTab, setServerModalTab] = useState<"create" | "join">("create");
   const [newServerName, setNewServerName] = useState<string>("");
+  const [joinInviteInput, setJoinInviteInput] = useState<string>("");
+  const [joinError, setJoinError] = useState<string | null>(null);
 
+  // Modal Criar Novo Canal
+  const [createChannelOpen, setCreateChannelOpen] = useState<boolean>(false);
+  const [newChannelName, setNewChannelName] = useState<string>("");
+  const [newChannelType, setNewChannelType] = useState<"text" | "voice">("text");
+
+  // Modal Convidar
   const [inviteModalOpen, setInviteModalOpen] = useState<boolean>(false);
   const [copiedInvite, setCopiedInvite] = useState<boolean>(false);
 
-  const activeServer = useMemo(
-    () => servers.find((s) => s.id === activeServerId) ?? servers[0],
-    [servers, activeServerId]
-  );
+  // 0. Recupera e guarda a última posição de navegação no navegador
+  useEffect(() => {
+    const savedState = localStorage.getItem("pamplex_nav_state");
+    if (savedState) {
+      try {
+        const parsed = JSON.parse(savedState);
+        if (typeof parsed.isHomeActive === "boolean") setIsHomeActive(parsed.isHomeActive);
+        if (parsed.activeServerId) setActiveServerId(parsed.activeServerId);
+        if (parsed.activeChannelId) setActiveChannelId(parsed.activeChannelId);
+        if (parsed.activeDmUserId !== undefined) setActiveDmUserId(parsed.activeDmUserId);
+      } catch {
+        // Ignora JSON inválido
+      }
+    }
+    setNavRestored(true);
+  }, []);
+
+  useEffect(() => {
+    if (!navRestored) return;
+    localStorage.setItem(
+      "pamplex_nav_state",
+      JSON.stringify({
+        isHomeActive,
+        activeServerId,
+        activeChannelId,
+        activeDmUserId,
+      })
+    );
+  }, [navRestored, isHomeActive, activeServerId, activeChannelId, activeDmUserId]);
+
+  // 1. Verificar autenticação
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      const currentUser = session?.user ?? null;
+      setUser(currentUser);
+      setIsAuthModalOpen(!currentUser);
+      setAuthLoading(false);
+    });
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      const currentUser = session?.user ?? null;
+      setUser(currentUser);
+      setIsAuthModalOpen(!currentUser);
+      setAuthLoading(false);
+    });
+
+    return () => subscription.unsubscribe();
+  }, [supabase]);
+
+  // Carrega todos os perfis reais e status de amizade do Supabase
+  const syncFriendsAndProfiles = useCallback(async () => {
+    if (!user) return;
+
+    const [{ data: profilesData }, { data: friendshipsData }] = await Promise.all([
+      supabase.from("profiles").select("*"),
+      supabase
+        .from("friendships")
+        .select("*")
+        .or(`user_id.eq.${user.id},friend_id.eq.${user.id}`),
+    ]);
+
+    if (!profilesData) return;
+
+    const realMembers: PamplexMember[] = profilesData
+      .filter((p: any) => p.id !== user.id)
+      .map((p: any) => {
+        const relationRecord = (friendshipsData || []).find(
+          (f: any) =>
+            (f.user_id === user.id && f.friend_id === p.id) ||
+            (f.friend_id === user.id && f.user_id === p.id)
+        );
+
+        let relation: PamplexMember["relation"] = undefined;
+        if (relationRecord) {
+          if (relationRecord.status === "accepted") {
+            relation = "friend";
+          } else if (relationRecord.user_id === user.id) {
+            relation = "pending_outgoing";
+          } else {
+            relation = "pending_incoming";
+          }
+        }
+
+        const displayName = p.display_name || p.username || "Membro";
+        const words = displayName.trim().split(" ").filter(Boolean);
+        const initials =
+          words.length >= 2
+            ? `${words[0][0]}${words[1][0]}`.toUpperCase()
+            : displayName.slice(0, 2).toUpperCase();
+
+        return {
+          id: p.id,
+          name: displayName,
+          username: p.username,
+          initials,
+          status: (p.status as PamplexMember["status"]) || "online",
+          accentColor: "bg-pamplex-turquesa text-pamplex-dark",
+          relation,
+        };
+      });
+
+    setMembers(realMembers);
+  }, [user, supabase]);
+
+  // Carrega servidores reais em que o utilizador participa (ou cria um servidor inicial se não tiver nenhum)
+  const syncServers = useCallback(async () => {
+    if (!user) return;
+
+    const { data: memberships } = await supabase
+      .from("server_members")
+      .select("server_id")
+      .eq("user_id", user.id);
+
+    const serverIds = (memberships || []).map((m: any) => m.server_id);
+
+    if (serverIds.length === 0) {
+      // Cria automaticamente o primeiro servidor pessoal do utilizador para a tela nunca ficar vazia
+      const { data: newSrv } = await supabase
+        .from("servers")
+        .insert({
+          name: "Meu Servidor Pamplex",
+          initials: "MP",
+          owner_id: user.id,
+        })
+        .select()
+        .single();
+
+      if (newSrv) {
+        await supabase.from("server_members").insert({
+          server_id: newSrv.id,
+          user_id: user.id,
+          role: "owner",
+        });
+
+        await supabase.from("channels").insert([
+          { server_id: newSrv.id, name: "geral", type: "text", category: "Canais de Texto" },
+          { server_id: newSrv.id, name: "Sala de Voz", type: "voice", category: "Canais de Voz" },
+        ]);
+
+        serverIds.push(newSrv.id);
+      }
+    }
+
+    if (serverIds.length === 0) return;
+
+    const { data: dbServers } = await supabase
+      .from("servers")
+      .select("*, channels(*)")
+      .in("id", serverIds)
+      .order("created_at", { ascending: true });
+
+    if (dbServers) {
+      const formattedServers: PamplexServer[] = dbServers.map((srv: any) => ({
+        id: srv.id,
+        name: srv.name,
+        initials: srv.initials,
+        hasActiveVoice: false,
+        isSpeakingNow: false,
+        activeSpeakersInitials: [],
+        channels: (srv.channels || [])
+          .sort((a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+          .map((ch: any) => ({
+            id: ch.id,
+            name: ch.name,
+            type: ch.type,
+            category: ch.category || (ch.type === "voice" ? "Canais de Voz" : "Canais de Texto"),
+          })),
+      }));
+
+      setServers(formattedServers);
+    }
+  }, [user, supabase]);
+
+  // 2. Carregamento inicial + Subscrições Realtime
+  useEffect(() => {
+    if (!user) return;
+
+    const loadAll = async () => {
+      await Promise.all([syncFriendsAndProfiles(), syncServers()]);
+
+      const { data: dbMessages } = await supabase
+        .from("messages")
+        .select("*, profiles(display_name)")
+        .order("created_at", { ascending: true });
+
+      if (dbMessages) {
+        const formattedMessages: PamplexMessage[] = dbMessages.map((msg: any) => {
+          const authorName = msg.profiles?.display_name || "Utilizador";
+          const words = authorName.trim().split(" ").filter(Boolean);
+          const initials =
+            words.length >= 2
+              ? `${words[0][0]}${words[1][0]}`.toUpperCase()
+              : authorName.slice(0, 2).toUpperCase();
+
+          return {
+            id: msg.id,
+            channelId: msg.channel_id,
+            authorId: msg.author_id,
+            authorName,
+            authorInitials: initials,
+            authorColor: "bg-pamplex-turquesa text-pamplex-dark",
+            content: msg.content,
+            timestamp: new Date(msg.created_at).getTime(),
+            reactions: [],
+          };
+        });
+        setMessages(formattedMessages);
+      }
+    };
+
+    loadAll();
+
+    const messagesSub = supabase
+      .channel("public:messages")
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "messages" },
+        async (payload) => {
+          const newRow = payload.new as any;
+          let authorName = "Membro Pamplex";
+
+          if (newRow.author_id === user.id) {
+            authorName =
+              user?.user_metadata?.display_name || user?.email?.split("@")[0] || "Você";
+          } else {
+            const { data: senderProfile } = await supabase
+              .from("profiles")
+              .select("display_name")
+              .eq("id", newRow.author_id)
+              .single();
+            if (senderProfile?.display_name) authorName = senderProfile.display_name;
+          }
+
+          const words = authorName.trim().split(" ").filter(Boolean);
+          const initials =
+            words.length >= 2
+              ? `${words[0][0]}${words[1][0]}`.toUpperCase()
+              : authorName.slice(0, 2).toUpperCase();
+
+          setMessages((prev) => {
+            if (prev.some((m) => m.id === newRow.id)) return prev;
+            return [
+              ...prev,
+              {
+                id: newRow.id,
+                channelId: newRow.channel_id,
+                authorId: newRow.author_id,
+                authorName,
+                authorInitials: initials,
+                authorColor: "bg-pamplex-turquesa text-pamplex-dark",
+                content: newRow.content,
+                timestamp: new Date(newRow.created_at).getTime(),
+                reactions: [],
+              },
+            ];
+          });
+        }
+      )
+      .subscribe();
+
+    const friendsSub = supabase
+      .channel("public:friendships")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "friendships" },
+        () => syncFriendsAndProfiles()
+      )
+      .subscribe();
+
+    const channelsSub = supabase
+      .channel("public:channels")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "channels" },
+        () => syncServers()
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(messagesSub);
+      supabase.removeChannel(friendsSub);
+      supabase.removeChannel(channelsSub);
+    };
+  }, [user, supabase, syncFriendsAndProfiles, syncServers]);
+
+  const currentUserProfile = useMemo(() => {
+    const displayName =
+      user?.user_metadata?.display_name ||
+      user?.email?.split("@")[0] ||
+      "Utilizador";
+    const username =
+      user?.user_metadata?.username ||
+      user?.email?.split("@")[0]?.toLowerCase() ||
+      "user";
+    const words = displayName.trim().split(" ").filter(Boolean);
+    const initials =
+      words.length >= 2
+        ? `${words[0][0]}${words[1][0]}`.toUpperCase()
+        : displayName.slice(0, 2).toUpperCase();
+
+    return { name: displayName, username, initials };
+  }, [user]);
+
+  // Lista completa de membros incluindo o próprio utilizador para a barra lateral direita
+  const serverMemberList = useMemo(() => {
+    if (!user) return members;
+    const meAsMember: PamplexMember = {
+      id: user.id,
+      name: currentUserProfile.name,
+      username: currentUserProfile.username,
+      initials: currentUserProfile.initials,
+      status: "online",
+      role: "Fundador",
+      accentColor: "bg-pamplex-turquesa text-pamplex-dark",
+      inVoiceChannelId: connectedVoiceChannelId ?? undefined,
+      isMuted,
+      isSpeaking: !isMuted && Boolean(connectedVoiceChannelId),
+    };
+    return [meAsMember, ...members];
+  }, [user, members, currentUserProfile, connectedVoiceChannelId, isMuted]);
+
+  const activeServer = useMemo(() => {
+    if (servers.length === 0) return null;
+    return servers.find((s) => s.id === activeServerId) ?? servers[0];
+  }, [servers, activeServerId]);
 
   const activeChannel = useMemo(() => {
+    if (!activeServer || activeServer.channels.length === 0) return null;
     const textChannels = activeServer.channels.filter((c) => c.type === "text");
     return (
       textChannels.find((c) => c.id === activeChannelId) ??
@@ -64,14 +403,15 @@ export default function PamplexApp() {
   );
 
   const dmVirtualChannel: PamplexChannel | null = useMemo(() => {
-    if (!activeDmFriend) return null;
+    if (!activeDmFriend || !user) return null;
+    const sharedChannelId = `dm-${[user.id, activeDmFriend.id].sort().join("-")}`;
     return {
-      id: `dm-${activeDmFriend.id}`,
+      id: sharedChannelId,
       name: activeDmFriend.name,
       type: "text",
       category: `@${activeDmFriend.username}`,
     };
-  }, [activeDmFriend]);
+  }, [activeDmFriend, user]);
 
   const currentChatChannel = isHomeActive ? dmVirtualChannel : activeChannel;
 
@@ -111,18 +451,6 @@ export default function PamplexApp() {
 
   const handleSelectTextChannel = (channelId: string) => {
     setActiveChannelId(channelId);
-    setServers((prev) =>
-      prev.map((srv) =>
-        srv.id === activeServer.id
-          ? {
-              ...srv,
-              channels: srv.channels.map((ch) =>
-                ch.id === channelId ? { ...ch, unread: false } : ch
-              ),
-            }
-          : srv
-      )
-    );
   };
 
   const handleSelectDmUser = (userId: string) => {
@@ -136,19 +464,33 @@ export default function PamplexApp() {
     });
   };
 
-  const handleAcceptFriendRequest = (userId: string) => {
-    setMembers((prev) =>
-      prev.map((m) => (m.id === userId ? { ...m, relation: "friend" } : m))
-    );
+  const handleAcceptFriendRequest = async (friendId: string) => {
+    if (!user) return;
+    await supabase
+      .from("friendships")
+      .update({ status: "accepted" })
+      .eq("user_id", friendId)
+      .eq("friend_id", user.id);
+    await syncFriendsAndProfiles();
   };
 
-  const handleDeclineFriendRequest = (userId: string) => {
-    setMembers((prev) =>
-      prev.map((m) => (m.id === userId ? { ...m, relation: undefined } : m))
-    );
-  };const handleSendFriendRequest = (username: string): { ok: boolean; message: string } => {
-    const clean = username.trim().toLowerCase();
-    if (clean === "gustavo") {
+  const handleDeclineFriendRequest = async (friendId: string) => {
+    if (!user) return;
+    await supabase
+      .from("friendships")
+      .delete()
+      .or(
+        `and(user_id.eq.${friendId},friend_id.eq.${user.id}),and(user_id.eq.${user.id},friend_id.eq.${friendId})`
+      );
+    await syncFriendsAndProfiles();
+  };
+
+  const handleSendFriendRequest = (username: string): { ok: boolean; message: string } => {
+    const clean = username.trim().toLowerCase().replace(/^@/, "");
+    if (!clean) {
+      return { ok: false, message: "Digite um nome de usuário válido." };
+    }
+    if (clean === currentUserProfile.username.toLowerCase()) {
       return { ok: false, message: "Você não pode adicionar a si mesmo." };
     }
 
@@ -164,30 +506,79 @@ export default function PamplexApp() {
       if (existing.relation === "pending_outgoing") {
         return { ok: false, message: `Já existe um pedido pendente para @${existing.username}.` };
       }
+
+      if (user) {
+        supabase
+          .from("friendships")
+          .insert({
+            user_id: user.id,
+            friend_id: existing.id,
+            status: "pending",
+          })
+          .then(() => syncFriendsAndProfiles());
+      }
+
       setMembers((prev) =>
         prev.map((m) => (m.id === existing.id ? { ...m, relation: "pending_outgoing" } : m))
       );
-      return { ok: true, message: `Pedido de amizade enviado para @${existing.username}!` }; }  const displayName = clean.charAt(0).toUpperCase() + clean.slice(1); const newUser: PamplexMember = { id: `u-${Date.now()}`,
-      name: displayName,
-      username: clean,
-      initials: clean.slice(0, 2).toUpperCase(),
-      status: "online",
-      accentColor: "bg-pamplex-aqua text-pamplex-dark",
-      relation: "pending_outgoing",
+      return { ok: true, message: `Pedido de amizade enviado para @${existing.username}!` };
+    }
+
+    return {
+      ok: false,
+      message: `Nenhum utilizador encontrado com @${clean}. Peça para ele criar conta no Pamplex primeiro!`,
     };
-    setMembers((prev) => [...prev, newUser]);
-    return { ok: true, message: `Pedido de amizade enviado para @${clean}!` }; };  const handleJoinVoiceChannel = (channelId: string) => { setConnectedVoiceChannelId(channelId); setMembers((prev) => prev.map((m) => m.id === "u1" ? { ...m, inVoiceChannelId: channelId, isSpeaking: !isMuted } : m ) ); };  const handleDisconnectVoice = () => { setConnectedVoiceChannelId(null); setMembers((prev) => prev.map((m) => m.id === "u1" ? { ...m, inVoiceChannelId: undefined, isSpeaking: false } : m ) ); };  const handleToggleMute = () => { setIsMuted((prev) => { const next = !prev; setMembers((list) => list.map((m) => m.id === "u1" ? { ...m, isMuted: next, isSpeaking: !next && Boolean(m.inVoiceChannelId) } : m ) ); return next; }); };  const handleToggleDeafen = () => setIsDeafened((prev) => !prev);  const handleSendMessage = (content: string) => { if (!currentChatChannel) return; const newMsg: PamplexMessage = { id: `m-${Date.now()}`,
-      channelId: currentChatChannel.id,
-      authorId: "u1",
-      authorName: "Gustavo Kriguer",
-      authorInitials: "GK",
-      authorColor: "bg-pamplex-turquesa text-pamplex-dark",
-      authorRole: isHomeActive ? undefined : "Fundador",
-      content,
-      timestamp: Date.now(),
-      reactions: [],
-    };
-    setMessages((prev) => [...prev, newMsg]);
+  };
+
+  const handleJoinVoiceChannel = (channelId: string) => {
+    setConnectedVoiceChannelId(channelId);
+  };
+
+  const handleDisconnectVoice = () => {
+    setConnectedVoiceChannelId(null);
+  };
+
+  const handleToggleMute = () => setIsMuted((prev) => !prev);
+  const handleToggleDeafen = () => setIsDeafened((prev) => !prev);
+
+  const handleSendMessage = async (content: string) => {
+    if (!currentChatChannel || !user) return;
+
+    const { data, error } = await supabase
+      .from("messages")
+      .insert({
+        channel_id: currentChatChannel.id,
+        author_id: user.id,
+        content,
+      })
+      .select()
+      .single();
+
+    if (error) {
+      console.error("Erro ao enviar mensagem:", error.message);
+      return;
+    }
+
+    if (data) {
+      setMessages((prev) => {
+        if (prev.some((m) => m.id === data.id)) return prev;
+        return [
+          ...prev,
+          {
+            id: data.id,
+            channelId: data.channel_id,
+            authorId: data.author_id,
+            authorName: currentUserProfile.name,
+            authorInitials: currentUserProfile.initials,
+            authorColor: "bg-pamplex-turquesa text-pamplex-dark",
+            authorRole: isHomeActive ? undefined : "Fundador",
+            content: data.content,
+            timestamp: new Date(data.created_at).getTime(),
+            reactions: [],
+          },
+        ];
+      });
+    }
   };
 
   const handleToggleReaction = (messageId: string, emoji: string) => {
@@ -212,7 +603,9 @@ export default function PamplexApp() {
     );
   };
 
-  const handleCreateServer = () => {
+  // Criar novo servidor e adicionar o criador como membro 'owner'
+  const handleCreateServer = async () => {
+    if (!user) return;
     const cleanName = newServerName.trim() || "Nova Comunidade";
     const words = cleanName.split(" ").filter(Boolean);
     const initials =
@@ -220,8 +613,113 @@ export default function PamplexApp() {
         ? `${words[0][0]}${words[1][0]}`.toUpperCase()
         : cleanName.slice(0, 2).toUpperCase();
 
-    const newId = `s-${Date.now()}`; const textId = `c-t-${Date.now()}`;
-    const voiceId = `c-v-${Date.now()}`;  const created: PamplexServer = { id: newId, name: cleanName, initials, hasActiveVoice: false, isSpeakingNow: false, activeSpeakersInitials: [], channels: [ { id: textId, name: "geral", type: "text", category: "Canais de Texto" }, { id: voiceId, name: "Sala de Voz", type: "voice", category: "Canais de Voz" }, ], };  setServers((prev) => [...prev, created]); setIsHomeActive(false); setActiveServerId(newId); setActiveChannelId(textId); setNewServerName(""); setCreateServerOpen(false); };  const inviteUrl = `https://pamplex.app/convite/${activeServer.id}`;
+    const { data: srvData, error: srvError } = await supabase
+      .from("servers")
+      .insert({
+        name: cleanName,
+        initials,
+        owner_id: user.id,
+      })
+      .select()
+      .single();
+
+    if (srvError || !srvData) return;
+
+    await supabase.from("server_members").insert({
+      server_id: srvData.id,
+      user_id: user.id,
+      role: "owner",
+    });
+
+    const { data: chData } = await supabase
+      .from("channels")
+      .insert([
+        { server_id: srvData.id, name: "geral", type: "text", category: "Canais de Texto" },
+        { server_id: srvData.id, name: "Sala de Voz", type: "voice", category: "Canais de Voz" },
+      ])
+      .select();
+
+    await syncServers();
+    setIsHomeActive(false);
+    setActiveServerId(srvData.id);
+    if (chData && chData[0]) setActiveChannelId(chData[0].id);
+    setNewServerName("");
+    setCreateServerOpen(false);
+  };
+
+  // Entrar num servidor existente colando o link de convite ou o ID do servidor
+  const handleJoinServerByInvite = async () => {
+    if (!user) return;
+    setJoinError(null);
+
+    const raw = joinInviteInput.trim();
+    const extractedId = raw.includes("/convite/")
+      ? raw.split("/convite/")[1].split(/[/?#]/)[0]
+      : raw;
+
+    if (!extractedId) {
+      setJoinError("Cole um link de convite ou ID de servidor válido.");
+      return;
+    }
+
+    const { data: targetServer, error: findErr } = await supabase
+      .from("servers")
+      .select("id")
+      .eq("id", extractedId)
+      .single();
+
+    if (findErr || !targetServer) {
+      setJoinError("Convite inválido ou servidor não encontrado.");
+      return;
+    }
+
+    await supabase.from("server_members").upsert(
+      {
+        server_id: targetServer.id,
+        user_id: user.id,
+        role: "member",
+      },
+      { onConflict: "server_id,user_id" }
+    );
+
+    await syncServers();
+    setIsHomeActive(false);
+    setActiveServerId(targetServer.id);
+    setJoinInviteInput("");
+    setCreateServerOpen(false);
+  };
+
+  // Criar novo canal de texto ou voz dentro do servidor ativo
+  const handleCreateChannel = async () => {
+    if (!activeServer || !newChannelName.trim()) return;
+
+    const formattedName =
+      newChannelType === "text"
+        ? newChannelName.trim().toLowerCase().replace(/\s+/g, "-")
+        : newChannelName.trim();
+
+    const { data: createdChannel, error } = await supabase
+      .from("channels")
+      .insert({
+        server_id: activeServer.id,
+        name: formattedName,
+        type: newChannelType,
+        category: newChannelType === "voice" ? "Canais de Voz" : "Canais de Texto",
+      })
+      .select()
+      .single();
+
+    if (error || !createdChannel) return;
+
+    await syncServers();
+    if (newChannelType === "text") {
+      setActiveChannelId(createdChannel.id);
+    }
+    setNewChannelName("");
+    setCreateChannelOpen(false);
+  };
+
+  const inviteUrl = activeServer ? `https://pamplex.app/convite/${activeServer.id}` : "";
 
   const handleCopyInvite = () => {
     navigator.clipboard?.writeText(inviteUrl);
@@ -229,127 +727,309 @@ export default function PamplexApp() {
     setTimeout(() => setCopiedInvite(false), 2000);
   };
 
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+  };
+
+  if (authLoading) {
+    return (
+      <div className="flex h-screen w-screen items-center justify-center bg-pamplex-bg text-pamplex-text-primary">
+        <p className="text-sm text-pamplex-text-muted">A carregar o Pamplex...</p>
+      </div>
+    );
+  }
+
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-pamplex-bg text-pamplex-text-primary">
-      <ServerRail
-        servers={servers}
-        activeServerId={activeServer.id}
-        isHomeActive={isHomeActive}
-        homeBadgeCount={pendingRequestsCount + totalUnreadDms}
-        onSelectHome={handleSelectHome}
-        onSelectServer={handleSelectServer}
-        onOpenCreateServer={() => setCreateServerOpen(true)}
-      />
-
-      {isHomeActive ? (
-        <DirectSidebar
-          friends={members}
-          activeDmUserId={activeDmUserId}
-          pendingCount={pendingRequestsCount}
-          unreadByUserId={unreadByUserId}
-          onSelectFriendsTab={() => setActiveDmUserId(null)}
-          onSelectDmUser={handleSelectDmUser}
-        />
-      ) : (
-        <ChannelSidebar
-          server={activeServer}
-          activeChannelId={activeChannel.id}
-          connectedVoiceChannelId={connectedVoiceChannelId}
-          members={members}
-          onSelectTextChannel={handleSelectTextChannel}
-          onJoinVoiceChannel={handleJoinVoiceChannel}
-          onOpenInviteModal={() => setInviteModalOpen(true)}
-        />
-      )}
-
-      {isHomeActive && !currentChatChannel ? (
-        <FriendsView
-          members={members}
-          onStartDm={handleSelectDmUser}
-          onAcceptRequest={handleAcceptFriendRequest}
-          onDeclineRequest={handleDeclineFriendRequest}
-          onSendFriendRequest={handleSendFriendRequest}
-        />
-      ) : (
-        currentChatChannel && (
-          <ChatArea
-            channel={currentChatChannel}
-            messages={channelMessages}
-            showMembers={!isHomeActive && showMembers}
-            onToggleMembers={() => setShowMembers((prev) => !prev)}
-            onSendMessage={handleSendMessage}
-            onToggleReaction={handleToggleReaction}
+    <div className="relative flex h-screen w-screen overflow-hidden bg-pamplex-bg text-pamplex-text-primary">
+      {user ? (
+        <>
+          <ServerRail
+            servers={servers}
+            activeServerId={activeServer?.id ?? ""}
+            isHomeActive={isHomeActive}
+            homeBadgeCount={pendingRequestsCount + totalUnreadDms}
+            onSelectHome={handleSelectHome}
+            onSelectServer={handleSelectServer}
+            onOpenCreateServer={() => {
+              setServerModalTab("create");
+              setJoinError(null);
+              setCreateServerOpen(true);
+            }}
           />
-        )
-      )}
 
-      {!isHomeActive && showMembers && <MemberList members={members} />}
+          {isHomeActive ? (
+            <DirectSidebar
+              friends={members}
+              activeDmUserId={activeDmUserId}
+              pendingCount={pendingRequestsCount}
+              unreadByUserId={unreadByUserId}
+              onSelectFriendsTab={() => setActiveDmUserId(null)}
+              onSelectDmUser={handleSelectDmUser}
+            />
+          ) : (
+            activeServer &&
+            activeChannel && (
+              <ChannelSidebar
+                server={activeServer}
+                activeChannelId={activeChannel.id}
+                connectedVoiceChannelId={connectedVoiceChannelId}
+                members={serverMemberList}
+                onSelectTextChannel={handleSelectTextChannel}
+                onJoinVoiceChannel={handleJoinVoiceChannel}
+                onOpenInviteModal={() => setInviteModalOpen(true)}
+              />
+            )
+          )}
 
-      <FloatingDock
-        currentUser={{ name: "Gustavo Kriguer", username: "gustavo", initials: "GK" }}
-        connectedChannelName={connectedVoiceInfo?.channelName ?? null}
-        connectedServerName={connectedVoiceInfo?.serverName ?? null}
-        isMuted={isMuted}
-        isDeafened={isDeafened}
-        onToggleMute={handleToggleMute}
-        onToggleDeafen={handleToggleDeafen}
-        onDisconnectVoice={handleDisconnectVoice}
-      />
+          {isHomeActive && !currentChatChannel ? (
+            <FriendsView
+              members={members}
+              onStartDm={handleSelectDmUser}
+              onAcceptRequest={handleAcceptFriendRequest}
+              onDeclineRequest={handleDeclineFriendRequest}
+              onSendFriendRequest={handleSendFriendRequest}
+            />
+          ) : (
+            currentChatChannel && (
+              <ChatArea
+                channel={currentChatChannel}
+                messages={channelMessages}
+                showMembers={!isHomeActive && showMembers}
+                onToggleMembers={() => setShowMembers((prev) => !prev)}
+                onSendMessage={handleSendMessage}
+                onToggleReaction={handleToggleReaction}
+              />
+            )
+          )}
 
-      <Modal
-        open={createServerOpen}
-        onClose={() => setCreateServerOpen(false)}
-        title="Criar novo servidor"
-        description="Crie um espaço organizado para amigos, equipa ou comunidade."
-        footer={
-          <>
-            <Button variant="ghost" onClick={() => setCreateServerOpen(false)}>
-              Cancelar
-            </Button>
-            <Button variant="primary" onClick={handleCreateServer}>
-              <Sparkles className="h-4 w-4" />
-              Criar Servidor
-            </Button>
-          </>
-        }
-      >
-        <Input
-          label="Nome do servidor"
-          placeholder="Ex: Oficina 3D & Projetos"
-          leftIcon={<Hash className="h-4 w-4" />}
-          value={newServerName}
-          onChange={(e) => setNewServerName(e.target.value)}
-        />
-      </Modal>
+          {!isHomeActive && showMembers && <MemberList members={serverMemberList} />}
 
-      <Modal
-        open={inviteModalOpen}
-        onClose={() => setInviteModalOpen(false)}
-        title={`Convidar para ${activeServer.name}`}
-        description="Partilhe este link direto para entrar no servidor."
-        footer={
-          <Button variant="secondary" onClick={() => setInviteModalOpen(false)}>
-            Concluir
-          </Button>
-        }
-      >
-        <div className="flex items-end gap-2">
-          <Input label="Link de convite" value={inviteUrl} readOnly />
-          <Button variant="primary" onClick={handleCopyInvite}>
-            {copiedInvite ? (
-              <>
-                <Check className="h-4 w-4" />
-                Copiado
-              </>
-            ) : (
-              <>
-                <Copy className="h-4 w-4" />
-                Copiar
-              </>
+          <FloatingDock
+            currentUser={currentUserProfile}
+            connectedChannelName={connectedVoiceInfo?.channelName ?? null}
+            connectedServerName={connectedVoiceInfo?.serverName ?? null}
+            isMuted={isMuted}
+            isDeafened={isDeafened}
+            onToggleMute={handleToggleMute}
+            onToggleDeafen={handleToggleDeafen}
+            onDisconnectVoice={handleDisconnectVoice}
+          />
+
+          {/* Barra rápida inferior direita: Novo Canal + Sair */}
+          <div className="fixed bottom-4 right-4 z-40 flex items-center gap-2">
+            {!isHomeActive && activeServer && (
+              <button
+                type="button"
+                onClick={() => setCreateChannelOpen(true)}
+                title="Criar Canal neste Servidor"
+                className="flex items-center gap-1.5 rounded-lg border border-teal-400/30 bg-teal-400/10 px-3 py-1.5 text-xs font-medium text-teal-300 backdrop-blur-md transition hover:bg-teal-400/20 cursor-pointer"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                Novo Canal
+              </button>
             )}
+
+            <button
+              type="button"
+              onClick={handleLogout}
+              title="Terminar Sessão"
+              className="flex items-center gap-1.5 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-1.5 text-xs font-medium text-red-400 backdrop-blur-md transition hover:bg-red-500/20 cursor-pointer"
+            >
+              <LogOut className="h-3.5 w-3.5" />
+              Sair
+            </button>
+          </div>
+
+          {/* Modal Criar Servidor OU Entrar por Convite */}
+          <Modal
+            open={createServerOpen}
+            onClose={() => setCreateServerOpen(false)}
+            title={serverModalTab === "create" ? "Criar novo servidor" : "Entrar num servidor"}
+            description={
+              serverModalTab === "create"
+                ? "Crie um espaço organizado para amigos, equipa ou comunidade."
+                : "Cole o link de convite ou o ID do servidor partilhado com você."
+            }
+            footer={
+              <>
+                <Button variant="ghost" onClick={() => setCreateServerOpen(false)}>
+                  Cancelar
+                </Button>
+                {serverModalTab === "create" ? (
+                  <Button variant="primary" onClick={handleCreateServer}>
+                    <Sparkles className="h-4 w-4" />
+                    Criar Servidor
+                  </Button>
+                ) : (
+                  <Button variant="primary" onClick={handleJoinServerByInvite}>
+                    <UserPlus className="h-4 w-4" />
+                    Entrar no Servidor
+                  </Button>
+                )}
+              </>
+            }
+          >
+            <div className="space-y-4">
+              <div className="flex gap-2 border-b border-zinc-800 pb-3">
+                <button
+                  type="button"
+                  onClick={() => setServerModalTab("create")}
+                  className={`rounded-lg px-3 py-1.5 text-xs font-medium transition cursor-pointer ${
+                    serverModalTab === "create"
+                      ? "bg-teal-400 text-zinc-950 font-semibold"
+                      : "bg-zinc-900 text-zinc-400 hover:text-white"
+                  }`}
+                >
+                  Criar Novo
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setServerModalTab("join")}
+                  className={`rounded-lg px-3 py-1.5 text-xs font-medium transition cursor-pointer ${
+                    serverModalTab === "join"
+                      ? "bg-teal-400 text-zinc-950 font-semibold"
+                      : "bg-zinc-900 text-zinc-400 hover:text-white"
+                  }`}
+                >
+                  Tenho um Convite
+                </button>
+              </div>
+
+              {serverModalTab === "create" ? (
+                <Input
+                  label="Nome do servidor"
+                  placeholder="Ex: Oficina 3D & Projetos"
+                  leftIcon={<Hash className="h-4 w-4" />}
+                  value={newServerName}
+                  onChange={(e) => setNewServerName(e.target.value)}
+                />
+              ) : (
+                <div className="space-y-2">
+                  <Input
+                    label="Link de convite ou ID"
+                    placeholder="https://pamplex.app/convite/..."
+                    value={joinInviteInput}
+                    onChange={(e) => setJoinInviteInput(e.target.value)}
+                  />
+                  {joinError && <p className="text-xs text-red-400">{joinError}</p>}
+                </div>
+              )}
+            </div>
+          </Modal>
+
+          {/* Modal Criar Novo Canal */}
+          <Modal
+            open={createChannelOpen}
+            onClose={() => setCreateChannelOpen(false)}
+            title={`Criar canal em ${activeServer?.name ?? "Servidor"}`}
+            description="Escolha o tipo de canal e um nome para organizar as conversas."
+            footer={
+              <>
+                <Button variant="ghost" onClick={() => setCreateChannelOpen(false)}>
+                  Cancelar
+                </Button>
+                <Button variant="primary" onClick={handleCreateChannel}>
+                  <Plus className="h-4 w-4" />
+                  Criar Canal
+                </Button>
+              </>
+            }
+          >
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setNewChannelType("text")}
+                  className={`flex items-center justify-center gap-2 rounded-xl border p-3 text-sm font-medium transition cursor-pointer ${
+                    newChannelType === "text"
+                      ? "border-teal-400 bg-teal-400/10 text-teal-300"
+                      : "border-zinc-800 bg-zinc-900 text-zinc-400 hover:text-white"
+                  }`}
+                >
+                  <Hash className="h-4 w-4" />
+                  Canal de Texto
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setNewChannelType("voice")}
+                  className={`flex items-center justify-center gap-2 rounded-xl border p-3 text-sm font-medium transition cursor-pointer ${
+                    newChannelType === "voice"
+                      ? "border-teal-400 bg-teal-400/10 text-teal-300"
+                      : "border-zinc-800 bg-zinc-900 text-zinc-400 hover:text-white"
+                  }`}
+                >
+                  <Volume2 className="h-4 w-4" />
+                  Sala de Voz
+                </button>
+              </div>
+
+              <Input
+                label="Nome do canal"
+                placeholder={newChannelType === "text" ? "ex: avisos-gerais" : "Ex: Squad Gaming"}
+                leftIcon={
+                  newChannelType === "text" ? (
+                    <Hash className="h-4 w-4" />
+                  ) : (
+                    <Volume2 className="h-4 w-4" />
+                  )
+                }
+                value={newChannelName}
+                onChange={(e) => setNewChannelName(e.target.value)}
+              />
+            </div>
+          </Modal>
+
+          {/* Modal Convidar */}
+          {activeServer && (
+            <Modal
+              open={inviteModalOpen}
+              onClose={() => setInviteModalOpen(false)}
+              title={`Convidar para ${activeServer.name}`}
+              description="Partilhe este link direto para que outros utilizadores entrem no servidor."
+              footer={
+                <Button variant="secondary" onClick={() => setInviteModalOpen(false)}>
+                  Concluir
+                </Button>
+              }
+            >
+              <div className="flex items-end gap-2">
+                <Input label="Link de convite" value={inviteUrl} readOnly />
+                <Button variant="primary" onClick={handleCopyInvite}>
+                  {copiedInvite ? (
+                    <>
+                      <Check className="h-4 w-4" />
+                      Copiado
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="h-4 w-4" />
+                      Copiar
+                    </>
+                  )}
+                </Button>
+              </div>
+            </Modal>
+          )}
+        </>
+      ) : (
+        <div className="flex h-full w-full flex-col items-center justify-center p-6 text-center">
+          <h1 className="text-3xl font-bold mb-2">Bem-vindo ao Pamplex</h1>
+          <p className="text-sm text-pamplex-text-muted mb-6">
+            Faça login ou crie uma conta para aceder aos seus servidores e chats.
+          </p>
+          <Button variant="primary" onClick={() => setIsAuthModalOpen(true)}>
+            Entrar / Registar
           </Button>
         </div>
-      </Modal>
+      )}
+
+      <AuthModal
+        isOpen={isAuthModalOpen}
+        onClose={() => {
+          if (user) setIsAuthModalOpen(false);
+        }}
+        onSuccess={() => setIsAuthModalOpen(false)}
+      />
     </div>
   );
 }
