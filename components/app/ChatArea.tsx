@@ -64,9 +64,16 @@ function renderTextWithMentions(text: string) {
   });
 }
 
-function renderMessageContent(content: string, onImageLoad?: () => void) {
-  // Remove linhas de citação Markdown antigas caso venham legadas
-  const cleanContent = content
+function renderMessageBody(content: string, onImageLoad?: () => void) {
+  // Limpa marcações antigas e o prefixo [reply:...] para exibir apenas o texto real da mensagem
+  let cleanContent = content;
+  if (cleanContent.startsWith("[reply:")) {
+    const endIdx = cleanContent.indexOf("]");
+    if (endIdx !== -1) {
+      cleanContent = cleanContent.slice(endIdx + 1).trim();
+    }
+  }
+  cleanContent = cleanContent
     .split("\n")
     .filter((line) => !line.startsWith("> **@"))
     .join("\n")
@@ -346,16 +353,20 @@ export function ChatArea({
                   </div>
                 )}
 
-                {/* Bloco de Citação limpo se for uma Resposta */}
+                {/* Bloco de Citação Estilo Discord (Borda Curvada à Esquerda) */}
                 {msg.replyTo && (
-                  <div className="mb-1 flex items-center gap-1.5 text-xs text-pamplex-text-muted">
-                    <div className="h-3 w-2 rounded-bl border-b border-l border-pamplex-border" />
-                    <span className="font-semibold text-pamplex-text-secondary">
-                      @{msg.replyTo.authorName}
-                    </span>
-                    <span className="truncate max-w-md opacity-80">
-                      {msg.replyTo.content.replace(IMAGE_URL_REGEX, "[Imagem]")}
-                    </span>
+                  <div className="mb-1.5 flex items-center gap-2 text-xs text-pamplex-text-muted">
+                    <div className="relative flex items-center">
+                      <div className="absolute -top-2 left-0 h-3 w-3 rounded-tl-[6px] border-l-2 border-t-2 border-pamplex-border" />
+                    </div>
+                    <div className="flex items-center gap-1.5 overflow-hidden rounded-[6px] bg-pamplex-surface/80 px-2 py-0.5 border border-pamplex-border/50">
+                      <span className="font-semibold text-pamplex-turquesa shrink-0">
+                        @{msg.replyTo.authorName}
+                      </span>
+                      <span className="truncate max-w-md text-pamplex-text-secondary opacity-90">
+                        {msg.replyTo.content.replace(IMAGE_URL_REGEX, "[Imagem]")}
+                      </span>
+                    </div>
                   </div>
                 )}
 
@@ -394,7 +405,7 @@ export function ChatArea({
                     </button>
                   </div>
                 ) : (
-                  renderMessageContent(msg.content, handleImageLoad)
+                  renderMessageBody(msg.content, handleImageLoad)
                 )}
 
                 {msg.reactions.length > 0 && (
