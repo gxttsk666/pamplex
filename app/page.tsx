@@ -759,7 +759,7 @@ export default function PamplexApp() {
   };
 
   const origin =
-    typeof window !== "undefined" ? window.location.origin : "https://pamplex.vercel.app";
+    typeof window !== "undefined" ? window.location.origin : "https://pamplex-lilac.vercel.app";
   const inviteUrl = activeServer ? `${origin}/convite/${activeServer.id}` : "";
 
   const handleCopyInvite = () => {
@@ -948,7 +948,7 @@ export default function PamplexApp() {
                 <div className="space-y-2">
                   <Input
                     label="Link de convite ou ID"
-                    placeholder="https://pamplex.vercel.app/convite/..."
+                    placeholder="https://pamplex-lilac.vercel.app/convite/..."
                     value={joinInviteInput}
                     onChange={(e) => setJoinInviteInput(e.target.value)}
                   />
