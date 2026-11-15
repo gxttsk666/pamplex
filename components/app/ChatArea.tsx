@@ -65,8 +65,15 @@ function renderTextWithMentions(text: string) {
 }
 
 function renderMessageContent(content: string, onImageLoad?: () => void) {
-  const imageMatches = content.match(IMAGE_URL_REGEX) ?? [];
-  const textWithoutImages = content.replace(IMAGE_URL_REGEX, "").trim();
+  // Remove linhas de citação Markdown antigas caso venham legadas
+  const cleanContent = content
+    .split("\n")
+    .filter((line) => !line.startsWith("> **@"))
+    .join("\n")
+    .trim();
+
+  const imageMatches = cleanContent.match(IMAGE_URL_REGEX) ?? [];
+  const textWithoutImages = cleanContent.replace(IMAGE_URL_REGEX, "").trim();
 
   return (
     <div className="flex flex-col gap-1.5">
@@ -339,7 +346,7 @@ export function ChatArea({
                   </div>
                 )}
 
-                {/* Bloco de Citação se for uma Resposta */}
+                {/* Bloco de Citação limpo se for uma Resposta */}
                 {msg.replyTo && (
                   <div className="mb-1 flex items-center gap-1.5 text-xs text-pamplex-text-muted">
                     <div className="h-3 w-2 rounded-bl border-b border-l border-pamplex-border" />

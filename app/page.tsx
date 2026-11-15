@@ -55,7 +55,7 @@ function writeLastReadMap(userId: string, map: Record<string, number>) {
   try {
     window.localStorage.setItem(getLastReadStorageKey(userId), JSON.stringify(map));
   } catch {
-    // Ignora caso localStorage esteja bloqueado
+    // Ignora
   }
 }
 
@@ -79,7 +79,7 @@ function playNotificationTone() {
     osc.start();
     osc.stop(ctx.currentTime + 0.16);
   } catch {
-    // Ignora caso o navegador bloqueie áudio antes de interação
+    // Ignora
   }
 }
 
@@ -122,7 +122,7 @@ export default function PamplexApp() {
   const [isMuted, setIsMuted] = useState(false);
   const [isDeafened, setIsDeafened] = useState(false);
 
-  // Persistência de leitura por DM (sobrevive ao F5)
+  // Persistência de leitura por DM
   const [lastReadByUserId, setLastReadByUserId] = useState<Record<string, number>>({});
   const [lastReadLoaded, setLastReadLoaded] = useState(false);
 
@@ -131,7 +131,6 @@ export default function PamplexApp() {
   const typingChannelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
   const lastTypingSentRef = useRef<number>(0);
 
-  // 1. Restaura e persiste a posição de navegação
   useEffect(() => {
     const saved = readNavState();
     if (saved) {
@@ -153,7 +152,6 @@ export default function PamplexApp() {
     });
   }, [navRestored, isHomeActive, activeServerId, activeChannelId, activeDmUserId]);
 
-  // Carrega timestamps de leitura ao autenticar
   useEffect(() => {
     if (!user) {
       setLastReadByUserId({});
@@ -177,20 +175,14 @@ export default function PamplexApp() {
     [user]
   );
 
-  // 2. Abre o login quando não há sessão
   useEffect(() => {
     if (authLoading) return;
     setIsAuthModalOpen(!user);
   }, [authLoading, user]);
 
-  // 3. Membros do servidor ativo
   useEffect(() => {
     if (activeServerId) fetchServerMembers(activeServerId);
   }, [activeServerId, fetchServerMembers, serverMemberships.length]);
-
-  /* ---------------------------------------------------------------------- */
-  /* Membros                                                                 */
-  /* ---------------------------------------------------------------------- */
 
   const members = useMemo<PamplexMember[]>(() => {
     if (!user) return [];
@@ -241,7 +233,6 @@ export default function PamplexApp() {
     return map;
   }, [members]);
 
-  // Prévia e timestamp da última mensagem de cada DM
   const lastDmByUserId = useMemo<Record<string, DmPreview>>(() => {
     if (!user) return {};
     const result: Record<string, DmPreview> = {};
@@ -272,10 +263,6 @@ export default function PamplexApp() {
 
     return result;
   }, [messages, user]);
-
-  /* ---------------------------------------------------------------------- */
-  /* Servidor / canal / DM ativos                                            */
-  /* ---------------------------------------------------------------------- */
 
   const activeServer = useMemo<PamplexServer | null>(() => {
     if (servers.length === 0) return null;
@@ -353,7 +340,6 @@ export default function PamplexApp() {
     [members]
   );
 
-  // Calcula não-lidas comparando com o lastRead salvo no localStorage
   const unreadByUserId = useMemo<Record<string, number>>(() => {
     if (!user || !lastReadLoaded) return {};
     const counts: Record<string, number> = {};
@@ -367,7 +353,6 @@ export default function PamplexApp() {
         pair[0] === user.id ? pair[1] : pair[1] === user.id ? pair[0] : null;
       if (!otherId) continue;
 
-      // Se a DM já está aberta na tela, não conta como não-lida
       if (isHomeActive && activeDmUserId === otherId) continue;
 
       const lastRead = lastReadByUserId[otherId] ?? 0;
@@ -384,7 +369,6 @@ export default function PamplexApp() {
     [unreadByUserId]
   );
 
-  // Sempre que estiver vendo uma DM e chegarem mensagens nela, atualiza o timestamp como lido
   useEffect(() => {
     if (!user || !lastReadLoaded || !isHomeActive || !activeDmUserId) return;
     const latestInDm = channelMessages[channelMessages.length - 1]?.timestamp ?? Date.now();
@@ -399,10 +383,6 @@ export default function PamplexApp() {
     }
     return null;
   }, [servers, connectedVoiceChannelId]);
-
-  /* ---------------------------------------------------------------------- */
-  /* Broadcast: "Fulano está digitando..."                                   */
-  /* ---------------------------------------------------------------------- */
 
   useEffect(() => {
     setTypingUsers([]);
@@ -455,10 +435,6 @@ export default function PamplexApp() {
     });
   }, [user, currentUserProfile.name]);
 
-  /* ---------------------------------------------------------------------- */
-  /* Som apenas para mensagens recebidas em tempo real                       */
-  /* ---------------------------------------------------------------------- */
-
   const seenMessageIdsRef = useRef<Set<string>>(new Set());
   const initialMessagesLoadedRef = useRef(false);
 
@@ -490,10 +466,6 @@ export default function PamplexApp() {
     },
     [markDmAsRead]
   );
-
-  /* ---------------------------------------------------------------------- */
-  /* Handlers                                                                */
-  /* ---------------------------------------------------------------------- */
 
   const handleSelectServer = (serverId: string) => {
     setIsHomeActive(false);
@@ -540,7 +512,7 @@ export default function PamplexApp() {
     if (!existing) {
       return {
         ok: false,
-        message: `Nenhum utilizador encontrado com @${clean}. Peça para ele criar conta no Pamplex primeiro!`,
+        message: `Nenhum utilizador encontrado com @${clean}.`,
       };
     }
 
@@ -595,8 +567,9 @@ export default function PamplexApp() {
 
     if (!finalContent) return;
 
+    // Removemos a duplicação de nome no payload: agora gravamos apenas o conteúdo limpo da mensagem respondida
     const payloadContent = replyTo
-      ? `> **@${replyTo.authorName}**: ${replyTo.content.split("\n")[0]}\n${finalContent}`
+      ? `[reply:${replyTo.id}:${replyTo.authorName}:${replyTo.content.replace(/\n/g, " ")}]${finalContent}`
       : finalContent;
 
     const { data, error } = await supabase
