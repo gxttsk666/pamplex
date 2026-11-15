@@ -1,12 +1,13 @@
 "use client";
 
-import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   Check,
   Hash,
   ImagePlus,
   Loader2,
   Pencil,
+  Reply,
   Send,
   SmilePlus,
   Trash2,
@@ -24,7 +25,11 @@ interface ChatAreaProps {
   typingUsers: string[];
   showMembers: boolean;
   onToggleMembers: () => void;
-  onSendMessage: (content: string, imageFile?: File | null) => Promise<void> | void;
+  onSendMessage: (
+    content: string,
+    imageFile?: File | null,
+    replyTo?: PamplexMessage | null
+  ) => Promise<void> | void;
   onEditMessage: (messageId: string, newContent: string) => Promise<void> | void;
   onDeleteMessage: (messageId: string) => Promise<void> | void;
   onToggleReaction: (messageId: string, emoji: string) => void;
@@ -110,6 +115,7 @@ export function ChatArea({
   const [selectedImage, setSelectedImage] = useState<File | null>(null);
   const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
+  const [replyingTo, setReplyingTo] = useState<PamplexMessage | null>(null);
 
   const [emojiPickerFor, setEmojiPickerFor] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -122,32 +128,24 @@ export function ChatArea({
 
   const scrollToBottomInstant = () => {
     const el = scrollContainerRef.current;
-    if (el) {
-      el.scrollTop = el.scrollHeight;
-    }
+    if (el) el.scrollTop = el.scrollHeight;
   };
 
-  // Posiciona instantaneamente no fundo ao abrir o canal ou após F5 (sem rolar desde o topo)
-  useLayoutEffect(() => {
+  useEffect(() => {
     if (messages.length === 0) return;
-
     if (initialChannelScrollDoneRef.current !== channel.id) {
       scrollToBottomInstant();
       initialChannelScrollDoneRef.current = channel.id;
       return;
     }
-
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages.length, channel.id]);
 
-  // Se uma imagem carregar e empurrar o layout, mantém colado no fundo se já estava lá embaixo
   const handleImageLoad = () => {
     const el = scrollContainerRef.current;
     if (!el) return;
     const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-    if (distanceFromBottom < 350) {
-      scrollToBottomInstant();
-    }
+    if (distanceFromBottom < 350) scrollToBottomInstant();
   };
 
   useEffect(() => {
@@ -188,9 +186,10 @@ export function ChatArea({
 
     setIsSending(true);
     try {
-      await onSendMessage(clean, selectedImage);
+      await onSendMessage(clean, selectedImage, replyingTo);
       setDraft("");
       setSelectedImage(null);
+      setReplyingTo(null);
       if (fileInputRef.current) fileInputRef.current.value = "";
     } finally {
       setIsSending(false);
@@ -275,7 +274,8 @@ export function ChatArea({
           const isGrouped =
             prev &&
             prev.authorId === msg.authorId &&
-            msg.timestamp - prev.timestamp <= FIVE_MINUTES_MS;
+            msg.timestamp - prev.timestamp <= FIVE_MINUTES_MS &&
+            !msg.replyTo;
 
           const isOwnMessage = msg.authorId === currentUserId;
           const isEditing = editingId === msg.id;
@@ -335,6 +335,19 @@ export function ChatArea({
                       className="text-[11px] text-pamplex-text-muted"
                     >
                       {formatTime(msg.timestamp)}
+                    </span>
+                  </div>
+                )}
+
+                {/* Bloco de Citação se for uma Resposta */}
+                {msg.replyTo && (
+                  <div className="mb-1 flex items-center gap-1.5 text-xs text-pamplex-text-muted">
+                    <div className="h-3 w-2 rounded-bl border-b border-l border-pamplex-border" />
+                    <span className="font-semibold text-pamplex-text-secondary">
+                      @{msg.replyTo.authorName}
+                    </span>
+                    <span className="truncate max-w-md opacity-80">
+                      {msg.replyTo.content.replace(IMAGE_URL_REGEX, "[Imagem]")}
                     </span>
                   </div>
                 )}
@@ -404,6 +417,15 @@ export function ChatArea({
                 <div className="relative flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                   <button
                     type="button"
+                    onClick={() => setReplyingTo(msg)}
+                    title="Responder"
+                    className="rounded-[6px] border border-pamplex-border bg-pamplex-surface p-1 text-pamplex-text-secondary hover:text-pamplex-turquesa cursor-pointer"
+                  >
+                    <Reply className="h-3.5 w-3.5" />
+                  </button>
+
+                  <button
+                    type="button"
                     onClick={() =>
                       setEmojiPickerFor((prevId) =>
                         prevId === msg.id ? null : msg.id
@@ -462,11 +484,36 @@ export function ChatArea({
         <div ref={bottomRef} />
       </div>
 
-      {/* Caixa de Envio + Preview de Imagem + Digitando */}
+      {/* Caixa de Envio + Barra de Resposta */}
       <form
         onSubmit={handleSubmit}
         className="shrink-0 px-5 pb-20 pt-1 bg-pamplex-bg"
       >
+        {replyingTo && (
+          <div className="mb-2 flex items-center justify-between rounded-[8px] border border-pamplex-border bg-pamplex-surface px-3 py-1.5 text-xs">
+            <div className="flex items-center gap-2 truncate text-pamplex-text-secondary">
+              <Reply className="h-3.5 w-3.5 text-pamplex-turquesa shrink-0" />
+              <span>
+                A responder a{" "}
+                <strong className="text-pamplex-text-primary">
+                  {replyingTo.authorName}
+                </strong>
+                :{" "}
+                <span className="opacity-75">
+                  {replyingTo.content.replace(IMAGE_URL_REGEX, "[Imagem]")}
+                </span>
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setReplyingTo(null)}
+              className="text-pamplex-text-muted hover:text-pamplex-text-primary cursor-pointer"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
+
         {imagePreviewUrl && (
           <div className="mb-2 inline-flex items-start gap-2 rounded-[10px] border border-pamplex-border bg-pamplex-surface p-2">
             {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -512,7 +559,7 @@ export function ChatArea({
               if (e.target.value.trim()) onTyping();
             }}
             onPaste={handlePaste}
-            placeholder={`Conversar em #${channel.name}... (cole prints com Ctrl+V)`}
+            placeholder={`Conversar em #${channel.name}...`}
             className="flex-1 bg-transparent text-sm text-pamplex-text-primary placeholder:text-pamplex-text-muted focus:outline-none"
           />
 

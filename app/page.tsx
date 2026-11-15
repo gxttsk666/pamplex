@@ -563,7 +563,11 @@ export default function PamplexApp() {
     return { ok: true, message: `Pedido de amizade enviado para @${existing.username}!` };
   };
 
-  const handleSendMessage = async (content: string, imageFile?: File | null) => {
+  const handleSendMessage = async (
+    content: string,
+    imageFile?: File | null,
+    replyTo?: PamplexMessage | null
+  ) => {
     if (!currentChatChannel || !user) return;
 
     let finalContent = content.trim();
@@ -591,12 +595,16 @@ export default function PamplexApp() {
 
     if (!finalContent) return;
 
+    const payloadContent = replyTo
+      ? `> **@${replyTo.authorName}**: ${replyTo.content.split("\n")[0]}\n${finalContent}`
+      : finalContent;
+
     const { data, error } = await supabase
       .from("messages")
       .insert({
         channel_id: currentChatChannel.id,
         author_id: user.id,
-        content: finalContent,
+        content: payloadContent,
       })
       .select("id, channel_id, author_id, content, created_at")
       .single();
@@ -614,6 +622,15 @@ export default function PamplexApp() {
         content: string;
         created_at: string;
       };
+
+      let extractedReply = replyTo
+        ? {
+            id: replyTo.id,
+            authorName: replyTo.authorName,
+            content: replyTo.content,
+          }
+        : undefined;
+
       updateMessages((prev) =>
         prev.some((m) => m.id === row.id)
           ? prev
@@ -629,6 +646,7 @@ export default function PamplexApp() {
                 content: row.content,
                 timestamp: new Date(row.created_at).getTime(),
                 reactions: [],
+                replyTo: extractedReply,
               },
             ]
       );
