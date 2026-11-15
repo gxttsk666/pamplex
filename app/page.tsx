@@ -719,7 +719,7 @@ export default function PamplexApp() {
     setCreateChannelOpen(false);
   };
 
-  const inviteUrl = activeServer ? `https://pamplex.app/convite/${activeServer.id}` : "";
+  const inviteUrl = activeServer ? `https://window.location.origin/convite/${activeServer.id}` : "";
 
   const handleCopyInvite = () => {
     navigator.clipboard?.writeText(inviteUrl);
