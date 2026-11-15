@@ -99,6 +99,7 @@ export default function PamplexApp() {
     refreshServers,
     refreshProfiles,
     updateMessages,
+    toggleReaction,
     currentUserProfile,
   } = usePamplexData();
 
@@ -567,7 +568,6 @@ export default function PamplexApp() {
 
     if (!finalContent) return;
 
-    // Removemos a duplicação de nome no payload: agora gravamos apenas o conteúdo limpo da mensagem respondida
     const payloadContent = replyTo
       ? `[reply:${replyTo.id}:${replyTo.authorName}:${replyTo.content.replace(/\n/g, " ")}]${finalContent}`
       : finalContent;
@@ -660,34 +660,8 @@ export default function PamplexApp() {
     updateMessages((prev) => prev.filter((m) => m.id !== messageId));
   };
 
-  const handleToggleReaction = (messageId: string, emoji: string) => {
-    updateMessages((prev) =>
-      prev.map((message) => {
-        if (message.id !== messageId) return message;
-        const existing = message.reactions.find((r) => r.emoji === emoji);
-
-        if (!existing) {
-          return {
-            ...message,
-            reactions: [...message.reactions, { emoji, count: 1, reacted: true }],
-          };
-        }
-
-        const nextCount = existing.reacted ? existing.count - 1 : existing.count + 1;
-        if (nextCount <= 0) {
-          return {
-            ...message,
-            reactions: message.reactions.filter((r) => r.emoji !== emoji),
-          };
-        }
-        return {
-          ...message,
-          reactions: message.reactions.map((r) =>
-            r.emoji === emoji ? { ...r, count: nextCount, reacted: !r.reacted } : r
-          ),
-        };
-      })
-    );
+  const handleToggleReaction = async (messageId: string, emoji: string) => {
+    await toggleReaction(messageId, emoji);
   };
 
   const handleCreateServer = async (name: string) => {

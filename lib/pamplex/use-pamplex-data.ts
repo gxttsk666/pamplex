@@ -9,6 +9,7 @@ import type {
   PamplexServer,
   PamplexChannel,
   MessageReplyInfo,
+  MessageReaction,
 } from "@/components/app/types";
 import {
   asRow,
@@ -60,6 +61,7 @@ interface UsePamplexDataResult {
   updateMessages: (
     updater: (messages: PamplexMessage[]) => PamplexMessage[]
   ) => void;
+  toggleReaction: (messageId: string, emoji: string) => Promise<void>;
   currentUserProfile: CurrentUserProfile;
 }
 
@@ -67,7 +69,6 @@ function profileDisplayName(profile: ProfileLike): string {
   return profile.display_name || profile.username || "Membro";
 }
 
-// Função auxiliar para analisar e extrair o replyTo e o conteúdo limpo
 function parseMessageContentAndReply(rawContent: string): {
   content: string;
   replyTo?: MessageReplyInfo;
@@ -94,7 +95,6 @@ function parseMessageContentAndReply(rawContent: string): {
     }
   }
 
-  // Remove vestígios legados de citação se houver
   content = content
     .split("\n")
     .filter((line) => {
@@ -153,7 +153,6 @@ export function usePamplexData(): UsePamplexDataResult {
 
   const creatingDefaultServerRef = useRef(false);
 
-  // 1. Sessão
   useEffect(() => {
     let active = true;
 
@@ -190,7 +189,6 @@ export function usePamplexData(): UsePamplexDataResult {
     };
   }, [user]);
 
-  // 2. Perfis e amizades
   const refreshProfiles = useCallback(async () => {
     if (!user) return;
 
@@ -210,7 +208,6 @@ export function usePamplexData(): UsePamplexDataResult {
     }
   }, [user, supabase]);
 
-  // 3. Servidores do utilizador
   const refreshServers = useCallback(async () => {
     if (!user) return;
 
@@ -279,17 +276,20 @@ export function usePamplexData(): UsePamplexDataResult {
     setServers(asRows<ServerRowWithChannels>(serverData).map(formatServer));
   }, [user, supabase]);
 
-  // 4. Mensagens
+  // Mensagens e Reações do Supabase
   const refreshMessages = useCallback(async () => {
     if (!user) return;
 
-    const { data, error } = await supabase
-      .from("messages")
-      .select("id, channel_id, author_id, content, created_at")
-      .order("created_at", { ascending: true });
+    const [messagesRes, reactionsRes] = await Promise.all([
+      supabase
+        .from("messages")
+        .select("id, channel_id, author_id, content, created_at")
+        .order("created_at", { ascending: true }),
+      supabase.from("message_reactions").select("message_id, user_id, emoji"),
+    ]);
 
-    if (error) {
-      console.error("Erro ao carregar mensagens:", error.message);
+    if (messagesRes.error) {
+      console.error("Erro ao carregar mensagens:", messagesRes.error.message);
       return;
     }
 
@@ -301,10 +301,33 @@ export function usePamplexData(): UsePamplexDataResult {
       authorNames.set(user.id, currentUserProfile.name);
     }
 
+    const rawReactions = reactionsRes.data ?? [];
+
     setMessages(
-      asRows<MessageRow>(data).map((row) => {
+      asRows<MessageRow>(messagesRes.data).map((row) => {
         const authorName = authorNames.get(row.author_id) || "Membro";
         const { content, replyTo } = parseMessageContentAndReply(row.content);
+
+        // Agrupa reações desta mensagem
+        const msgReactionsMap = new Map<string, { count: number; reacted: boolean }>();
+        rawReactions
+          .filter((r) => r.message_id === row.id)
+          .forEach((r) => {
+            const existing = msgReactionsMap.get(r.emoji) || { count: 0, reacted: false };
+            msgReactionsMap.set(r.emoji, {
+              count: existing.count + 1,
+              reacted: existing.reacted || r.user_id === user.id,
+            });
+          });
+
+        const reactions: MessageReaction[] = Array.from(msgReactionsMap.entries()).map(
+          ([emoji, data]) => ({
+            emoji,
+            count: data.count,
+            reacted: data.reacted,
+          })
+        );
+
         return {
           id: row.id,
           channelId: row.channel_id,
@@ -314,12 +337,75 @@ export function usePamplexData(): UsePamplexDataResult {
           authorColor: AUTHOR_COLOR,
           content,
           timestamp: new Date(row.created_at).getTime(),
-          reactions: [],
+          reactions,
           replyTo,
         };
       })
     );
   }, [user, supabase, profiles, currentUserProfile]);
+
+  const toggleReaction = useCallback(
+    async (messageId: string, emoji: string) => {
+      if (!user) return;
+
+      // Verifica estado atual na UI
+      const currentMsg = messages.find((m) => m.id === messageId);
+      if (!currentMsg) return;
+
+      const existingReaction = currentMsg.reactions.find((r) => r.emoji === emoji);
+      const isReacted = existingReaction?.reacted ?? false;
+
+      // Atualização otimista na UI instantânea
+      setMessages((prev) =>
+        prev.map((msg) => {
+          if (msg.id !== messageId) return msg;
+          const reactions = [...msg.reactions];
+          const idx = reactions.findIndex((r) => r.emoji === emoji);
+
+          if (isReacted) {
+            if (idx !== -1) {
+              if (reactions[idx].count <= 1) {
+                reactions.splice(idx, 1);
+              } else {
+                reactions[idx] = {
+                  ...reactions[idx],
+                  count: reactions[idx].count - 1,
+                  reacted: false,
+                };
+              }
+            }
+          } else {
+            if (idx !== -1) {
+              reactions[idx] = {
+                ...reactions[idx],
+                count: reactions[idx].count + 1,
+                reacted: true,
+              };
+            } else {
+              reactions.push({ emoji, count: 1, reacted: true });
+            }
+          }
+          return { ...msg, reactions };
+        })
+      );
+
+      // Sincroniza com Supabase
+      if (isReacted) {
+        await supabase
+          .from("message_reactions")
+          .delete()
+          .eq("message_id", messageId)
+          .eq("user_id", user.id)
+          .eq("emoji", emoji);
+      } else {
+        await supabase.from("message_reactions").upsert(
+          { message_id: messageId, user_id: user.id, emoji },
+          { onConflict: "message_id,user_id,emoji" }
+        );
+      }
+    },
+    [user, messages, supabase]
+  );
 
   const fetchServerMembers = useCallback(
     async (serverId: string) => {
@@ -403,7 +489,7 @@ export function usePamplexData(): UsePamplexDataResult {
     []
   );
 
-  // 5. Realtime: INSERT, UPDATE e DELETE de mensagens + amizades + canais
+  // Realtime de mensagens e reações
   useEffect(() => {
     if (!user) return;
 
@@ -468,6 +554,13 @@ export function usePamplexData(): UsePamplexDataResult {
           setMessages((prev) => prev.filter((m) => m.id !== id));
         }
       )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "message_reactions" },
+        () => {
+          refreshMessages();
+        }
+      )
       .subscribe();
 
     const friendsChannel = supabase
@@ -504,64 +597,9 @@ export function usePamplexData(): UsePamplexDataResult {
     upsertMessage,
     refreshProfiles,
     refreshServers,
+    refreshMessages,
   ]);
 
-  // 6. Presença real
-  useEffect(() => {
-    if (!user) return;
-
-    const presence = supabase.channel("online-users", {
-      config: { presence: { key: user.id } },
-    });
-
-    presence
-      .on("presence", { event: "sync" }, () => {
-        setOnlineIds(new Set(Object.keys(presence.presenceState())));
-      })
-      .subscribe(async (status) => {
-        if (status === "SUBSCRIBED") {
-          await presence.track({
-            user_id: user.id,
-            online_at: new Date().toISOString(),
-          });
-        }
-      });
-
-    return () => {
-      presence.untrack();
-      supabase.removeChannel(presence);
-    };
-  }, [user, supabase]);
-
-  // 7. Convite pendente guardado antes do login
-  useEffect(() => {
-    if (!user) return;
-
-    let cancelled = false;
-    const pending = (() => {
-      try {
-        const value = window.localStorage.getItem(PENDING_INVITE_KEY);
-        if (value) window.localStorage.removeItem(PENDING_INVITE_KEY);
-        return value;
-      } catch {
-        return null;
-      }
-    })();
-
-    if (!pending) return;
-
-    joinServerById(pending).then((result) => {
-      if (cancelled || !result.ok) return;
-      refreshServers();
-      refreshMessages();
-    });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [user, joinServerById, refreshServers, refreshMessages]);
-
-  // 8. Carga inicial
   useEffect(() => {
     refreshProfiles();
   }, [refreshProfiles]);
@@ -591,6 +629,7 @@ export function usePamplexData(): UsePamplexDataResult {
     appendMessage,
     upsertMessage,
     updateMessages,
+    toggleReaction,
     currentUserProfile,
   };
 }
