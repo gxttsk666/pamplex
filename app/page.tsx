@@ -36,6 +36,7 @@ export default function PamplexApp() {
   const [navRestored, setNavRestored] = useState<boolean>(false);
 
   const [members, setMembers] = useState<PamplexMember[]>([]);
+  const [activeServerMemberIds, setActiveServerMemberIds] = useState<string[]>([]);
   const [messages, setMessages] = useState<PamplexMessage[]>([]);
   const [unreadByUserId, setUnreadByUserId] = useState<Record<string, number>>({});
   const [showMembers, setShowMembers] = useState<boolean>(true);
@@ -165,7 +166,7 @@ export default function PamplexApp() {
     setMembers(realMembers);
   }, [user, supabase]);
 
-  // Carrega servidores reais em que o utilizador participa (ou cria um servidor inicial se não tiver nenhum)
+  // Carrega servidores reais em que o utilizador participa
   const syncServers = useCallback(async () => {
     if (!user) return;
 
@@ -177,7 +178,6 @@ export default function PamplexApp() {
     const serverIds = (memberships || []).map((m: any) => m.server_id);
 
     if (serverIds.length === 0) {
-      // Cria automaticamente o primeiro servidor pessoal do utilizador para a tela nunca ficar vazia
       const { data: newSrv } = await supabase
         .from("servers")
         .insert({
@@ -234,44 +234,55 @@ export default function PamplexApp() {
     }
   }, [user, supabase]);
 
+  // Carrega mensagens sem depender de join ambíguo
+  const syncMessages = useCallback(async () => {
+    if (!user) return;
+
+    const [{ data: dbMessages, error }, { data: allProfiles }] = await Promise.all([
+      supabase.from("messages").select("*").order("created_at", { ascending: true }),
+      supabase.from("profiles").select("id, display_name, username"),
+    ]);
+
+    if (error) {
+      console.error("Erro ao carregar mensagens:", error.message);
+      return;
+    }
+
+    const profileMap = new Map<string, string>();
+    (allProfiles || []).forEach((p: any) => {
+      profileMap.set(p.id, p.display_name || p.username || "Membro");
+    });
+
+    if (dbMessages) {
+      const formattedMessages: PamplexMessage[] = dbMessages.map((msg: any) => {
+        const authorName = profileMap.get(msg.author_id) || "Membro";
+        const words = authorName.trim().split(" ").filter(Boolean);
+        const initials =
+          words.length >= 2
+            ? `${words[0][0]}${words[1][0]}`.toUpperCase()
+            : authorName.slice(0, 2).toUpperCase();
+
+        return {
+          id: msg.id,
+          channelId: msg.channel_id,
+          authorId: msg.author_id,
+          authorName,
+          authorInitials: initials,
+          authorColor: "bg-pamplex-turquesa text-pamplex-dark",
+          content: msg.content,
+          timestamp: new Date(msg.created_at).getTime(),
+          reactions: [],
+        };
+      });
+      setMessages(formattedMessages);
+    }
+  }, [user, supabase]);
+
   // 2. Carregamento inicial + Subscrições Realtime
   useEffect(() => {
     if (!user) return;
 
-    const loadAll = async () => {
-      await Promise.all([syncFriendsAndProfiles(), syncServers()]);
-
-      const { data: dbMessages } = await supabase
-        .from("messages")
-        .select("*, profiles(display_name)")
-        .order("created_at", { ascending: true });
-
-      if (dbMessages) {
-        const formattedMessages: PamplexMessage[] = dbMessages.map((msg: any) => {
-          const authorName = msg.profiles?.display_name || "Utilizador";
-          const words = authorName.trim().split(" ").filter(Boolean);
-          const initials =
-            words.length >= 2
-              ? `${words[0][0]}${words[1][0]}`.toUpperCase()
-              : authorName.slice(0, 2).toUpperCase();
-
-          return {
-            id: msg.id,
-            channelId: msg.channel_id,
-            authorId: msg.author_id,
-            authorName,
-            authorInitials: initials,
-            authorColor: "bg-pamplex-turquesa text-pamplex-dark",
-            content: msg.content,
-            timestamp: new Date(msg.created_at).getTime(),
-            reactions: [],
-          };
-        });
-        setMessages(formattedMessages);
-      }
-    };
-
-    loadAll();
+    Promise.all([syncFriendsAndProfiles(), syncServers(), syncMessages()]);
 
     const messagesSub = supabase
       .channel("public:messages")
@@ -288,10 +299,12 @@ export default function PamplexApp() {
           } else {
             const { data: senderProfile } = await supabase
               .from("profiles")
-              .select("display_name")
+              .select("display_name, username")
               .eq("id", newRow.author_id)
               .single();
-            if (senderProfile?.display_name) authorName = senderProfile.display_name;
+            if (senderProfile) {
+              authorName = senderProfile.display_name || senderProfile.username || "Membro";
+            }
           }
 
           const words = authorName.trim().split(" ").filter(Boolean);
@@ -339,12 +352,22 @@ export default function PamplexApp() {
       )
       .subscribe();
 
+    const membersSub = supabase
+      .channel("public:server_members")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "server_members" },
+        () => syncServers()
+      )
+      .subscribe();
+
     return () => {
       supabase.removeChannel(messagesSub);
       supabase.removeChannel(friendsSub);
       supabase.removeChannel(channelsSub);
+      supabase.removeChannel(membersSub);
     };
-  }, [user, supabase, syncFriendsAndProfiles, syncServers]);
+  }, [user, supabase, syncFriendsAndProfiles, syncServers, syncMessages]);
 
   const currentUserProfile = useMemo(() => {
     const displayName =
@@ -364,7 +387,26 @@ export default function PamplexApp() {
     return { name: displayName, username, initials };
   }, [user]);
 
-  // Lista completa de membros incluindo o próprio utilizador para a barra lateral direita
+  const activeServer = useMemo(() => {
+    if (servers.length === 0) return null;
+    return servers.find((s) => s.id === activeServerId) ?? servers[0];
+  }, [servers, activeServerId]);
+
+  // Busca os membros reais do servidor selecionado
+  useEffect(() => {
+    if (!activeServer?.id) return;
+    supabase
+      .from("server_members")
+      .select("user_id")
+      .eq("server_id", activeServer.id)
+      .then(({ data }) => {
+        if (data) {
+          setActiveServerMemberIds(data.map((r: any) => r.user_id));
+        }
+      });
+  }, [activeServer?.id, supabase]);
+
+  // Lista completa de membros do servidor ativo
   const serverMemberList = useMemo(() => {
     if (!user) return members;
     const meAsMember: PamplexMember = {
@@ -379,13 +421,9 @@ export default function PamplexApp() {
       isMuted,
       isSpeaking: !isMuted && Boolean(connectedVoiceChannelId),
     };
-    return [meAsMember, ...members];
-  }, [user, members, currentUserProfile, connectedVoiceChannelId, isMuted]);
-
-  const activeServer = useMemo(() => {
-    if (servers.length === 0) return null;
-    return servers.find((s) => s.id === activeServerId) ?? servers[0];
-  }, [servers, activeServerId]);
+    const otherServerMembers = members.filter((m) => activeServerMemberIds.includes(m.id));
+    return [meAsMember, ...otherServerMembers];
+  }, [user, members, activeServerMemberIds, currentUserProfile, connectedVoiceChannelId, isMuted]);
 
   const activeChannel = useMemo(() => {
     if (!activeServer || activeServer.channels.length === 0) return null;
@@ -547,7 +585,7 @@ export default function PamplexApp() {
     const { data, error } = await supabase
       .from("messages")
       .insert({
-        channel_id: currentChatChannel.id,
+        channel_id: String(currentChatChannel.id),
         author_id: user.id,
         content,
       })
@@ -556,6 +594,7 @@ export default function PamplexApp() {
 
     if (error) {
       console.error("Erro ao enviar mensagem:", error.message);
+      alert(`Erro ao enviar mensagem: ${error.message}`);
       return;
     }
 
@@ -719,7 +758,9 @@ export default function PamplexApp() {
     setCreateChannelOpen(false);
   };
 
-  const inviteUrl = activeServer ? `https://window.location.origin/convite/${activeServer.id}` : "";
+  const origin =
+    typeof window !== "undefined" ? window.location.origin : "https://pamplex.vercel.app";
+  const inviteUrl = activeServer ? `${origin}/convite/${activeServer.id}` : "";
 
   const handleCopyInvite = () => {
     navigator.clipboard?.writeText(inviteUrl);
@@ -907,7 +948,7 @@ export default function PamplexApp() {
                 <div className="space-y-2">
                   <Input
                     label="Link de convite ou ID"
-                    placeholder="https://pamplex.app/convite/..."
+                    placeholder="https://pamplex.vercel.app/convite/..."
                     value={joinInviteInput}
                     onChange={(e) => setJoinInviteInput(e.target.value)}
                   />
