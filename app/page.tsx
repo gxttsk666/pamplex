@@ -5,7 +5,7 @@ import { LogOut, Plus, UserPlus } from "lucide-react";
 import { AuthModal } from "@/components/auth/AuthModal";
 import { ServerRail } from "@/components/app/ServerRail";
 import { ChannelSidebar } from "@/components/app/ChannelSidebar";
-import { DirectSidebar } from "@/components/app/DirectSidebar";
+import { DirectSidebar, type DmPreview } from "@/components/app/DirectSidebar";
 import { FriendsView } from "@/components/app/FriendsView";
 import { ChatArea } from "@/components/app/ChatArea";
 import { MemberList } from "@/components/app/MemberList";
@@ -36,6 +36,31 @@ import {
 type ServerModalTab = "create" | "join";
 
 const AUTHOR_COLOR = "bg-pamplex-turquesa text-pamplex-dark";
+const IMAGE_URL_REGEX = /https?:\/\/[^\s]+\.(?:png|jpe?g|gif|webp|avif)(?:\?[^\s]*)?/i;
+
+function playNotificationTone() {
+  try {
+    const AudioCtx =
+      window.AudioContext ||
+      (window as unknown as { webkitAudioContext?: typeof AudioContext })
+        .webkitAudioContext;
+    if (!AudioCtx) return;
+    const ctx = new AudioCtx();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(660, ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(880, ctx.currentTime + 0.09);
+    gain.gain.setValueAtTime(0.05, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.16);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.16);
+  } catch {
+    // Ignora caso o navegador bloqueie áudio antes de interação
+  }
+}
 
 export default function PamplexApp() {
   const {
@@ -71,7 +96,7 @@ export default function PamplexApp() {
   const [channelModalOpen, setChannelModalOpen] = useState(false);
   const [inviteModalOpen, setInviteModalOpen] = useState(false);
 
-  // Áudio (sem transporte real ainda: apenas estado local dos controlos)
+  // Áudio
   const [connectedVoiceChannelId, setConnectedVoiceChannelId] = useState<string | null>(null);
   const [isMuted, setIsMuted] = useState(false);
   const [isDeafened, setIsDeafened] = useState(false);
@@ -80,6 +105,11 @@ export default function PamplexApp() {
   const [unreadByUserId, setUnreadByUserId] = useState<Record<string, number>>({});
   const activeDmRef = useRef<string | null>(null);
   const isHomeActiveRef = useRef(false);
+
+  // Indicador "está digitando..."
+  const [typingUsers, setTypingUsers] = useState<string[]>([]);
+  const typingChannelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
+  const lastTypingSentRef = useRef<number>(0);
 
   activeDmRef.current = activeDmUserId;
   isHomeActiveRef.current = isHomeActive;
@@ -141,12 +171,11 @@ export default function PamplexApp() {
       .map((profile) => {
         const displayName = profile.display_name || profile.username || "Membro";
         const storedStatus = profile.status;
-        const status: PamplexMember["status"] =
-          !onlineIds.has(profile.id)
-            ? OFFLINE_STATUS
-            : storedStatus === "idle" || storedStatus === "dnd"
-              ? storedStatus
-              : ONLINE_STATUS;
+        const status: PamplexMember["status"] = !onlineIds.has(profile.id)
+          ? OFFLINE_STATUS
+          : storedStatus === "idle" || storedStatus === "dnd"
+            ? storedStatus
+            : ONLINE_STATUS;
 
         return {
           id: profile.id,
@@ -170,6 +199,38 @@ export default function PamplexApp() {
     members.forEach((member) => map.set(member.id, member));
     return map;
   }, [members]);
+
+  // Prévia e timestamp da última mensagem de cada DM (para ordenar a DirectSidebar)
+  const lastDmByUserId = useMemo<Record<string, DmPreview>>(() => {
+    if (!user) return {};
+    const result: Record<string, DmPreview> = {};
+
+    for (const msg of messages) {
+      const pair = parseDmChannelId(msg.channelId);
+      if (!pair) continue;
+      const otherId =
+        pair[0] === user.id ? pair[1] : pair[1] === user.id ? pair[0] : null;
+      if (!otherId) continue;
+
+      const existing = result[otherId];
+      if (!existing || msg.timestamp >= existing.timestamp) {
+        const isImage = IMAGE_URL_REGEX.test(msg.content);
+        const cleanText = msg.content.replace(IMAGE_URL_REGEX, "").trim();
+        const previewText = cleanText
+          ? `${msg.authorId === user.id ? "Você: " : ""}${cleanText}`
+          : isImage
+            ? `${msg.authorId === user.id ? "Você enviou " : ""}📷 Imagem`
+            : msg.content;
+
+        result[otherId] = {
+          text: previewText,
+          timestamp: msg.timestamp,
+        };
+      }
+    }
+
+    return result;
+  }, [messages, user]);
 
   /* ---------------------------------------------------------------------- */
   /* Servidor / canal / DM ativos                                            */
@@ -236,7 +297,15 @@ export default function PamplexApp() {
       .map((member) => ({ ...member, role: toRoleLabel(roleById.get(member.id)) }));
 
     return [me, ...others];
-  }, [user, members, serverMemberships, currentUserProfile, connectedVoiceChannelId, isMuted, isDeafened]);
+  }, [
+    user,
+    members,
+    serverMemberships,
+    currentUserProfile,
+    connectedVoiceChannelId,
+    isMuted,
+    isDeafened,
+  ]);
 
   const pendingRequestsCount = useMemo(
     () => members.filter((member) => member.relation === "pending_incoming").length,
@@ -258,45 +327,111 @@ export default function PamplexApp() {
   }, [servers, connectedVoiceChannelId]);
 
   /* ---------------------------------------------------------------------- */
-  /* Contador de não-lidas em DMs                                            */
+  /* Broadcast: "Fulano está digitando..."                                   */
   /* ---------------------------------------------------------------------- */
 
-  // Toda mensagem nova passa por aqui: incrementa o contador do remetente
-  // quando a conversa não está aberta na tela.
-  const countUnread = useCallback((message: PamplexMessage, viewerId: string) => {
-    if (message.authorId === viewerId) return;
+  useEffect(() => {
+    setTypingUsers([]);
+    if (!user || !currentChatChannel) return;
 
-    const pair = parseDmChannelId(message.channelId);
-    if (!pair) return;
+    const timeouts = new Map<string, ReturnType<typeof setTimeout>>();
+    const channel = supabase.channel(`typing:${currentChatChannel.id}`);
 
-    const otherId = pair[0] === viewerId ? pair[1] : pair[0];
-    if (!otherId || otherId === viewerId) return;
+    channel
+      .on("broadcast", { event: "typing" }, ({ payload }) => {
+        const senderId = String(payload?.userId ?? "");
+        const senderName = String(payload?.name ?? "");
+        if (!senderId || senderId === user.id || !senderName) return;
 
-    const isOpen =
-      isHomeActiveRef.current &&
-      activeDmRef.current === otherId &&
-      document.visibilityState === "visible";
-    if (isOpen) return;
+        setTypingUsers((prev) =>
+          prev.includes(senderName) ? prev : [...prev, senderName]
+        );
 
-    setUnreadByUserId((prev) => ({
-      ...prev,
-      [otherId]: (prev[otherId] ?? 0) + 1,
-    }));
-  }, []);
+        const existingTimer = timeouts.get(senderName);
+        if (existingTimer) clearTimeout(existingTimer);
+        timeouts.set(
+          senderName,
+          setTimeout(() => {
+            setTypingUsers((prev) => prev.filter((n) => n !== senderName));
+            timeouts.delete(senderName);
+          }, 3000)
+        );
+      })
+      .subscribe();
+
+    typingChannelRef.current = channel;
+
+    return () => {
+      timeouts.forEach((timer) => clearTimeout(timer));
+      supabase.removeChannel(channel);
+      typingChannelRef.current = null;
+    };
+  }, [user, currentChatChannel, supabase]);
+
+  const handleTyping = useCallback(() => {
+    if (!user || !typingChannelRef.current) return;
+    const now = Date.now();
+    if (now - lastTypingSentRef.current < 1800) return;
+    lastTypingSentRef.current = now;
+
+    typingChannelRef.current.send({
+      type: "broadcast",
+      event: "typing",
+      payload: { userId: user.id, name: currentUserProfile.name },
+    });
+  }, [user, currentUserProfile.name]);
+
+  /* ---------------------------------------------------------------------- */
+  /* Contador de não-lidas e som de notificação                              */
+  /* ---------------------------------------------------------------------- */
+
+  const countUnreadAndNotify = useCallback(
+    (message: PamplexMessage, viewerId: string, isInitialLoad: boolean) => {
+      if (message.authorId === viewerId) return;
+
+      const pair = parseDmChannelId(message.channelId);
+      const isCurrentChannelOpen =
+        document.visibilityState === "visible" &&
+        currentChatChannel?.id === message.channelId;
+
+      if (!isInitialLoad && !isCurrentChannelOpen) {
+        playNotificationTone();
+      }
+
+      if (!pair) return;
+
+      const otherId = pair[0] === viewerId ? pair[1] : pair[0];
+      if (!otherId || otherId === viewerId) return;
+
+      const isDmOpen =
+        isHomeActiveRef.current &&
+        activeDmRef.current === otherId &&
+        document.visibilityState === "visible";
+      if (isDmOpen) return;
+
+      setUnreadByUserId((prev) => ({
+        ...prev,
+        [otherId]: (prev[otherId] ?? 0) + 1,
+      }));
+    },
+    [currentChatChannel?.id]
+  );
 
   const seenMessageIdsRef = useRef<Set<string>>(new Set());
+  const initialMessagesLoadedRef = useRef(false);
 
   useEffect(() => {
-    if (!user) return;
+    if (!user || messages.length === 0) return;
 
+    const isInitial = !initialMessagesLoadedRef.current;
     for (const message of messages) {
       if (seenMessageIdsRef.current.has(message.id)) continue;
       seenMessageIdsRef.current.add(message.id);
-      countUnread(message, user.id);
+      countUnreadAndNotify(message, user.id, isInitial);
     }
-  }, [messages, user, countUnread]);
+    initialMessagesLoadedRef.current = true;
+  }, [messages, user, countUnreadAndNotify]);
 
-  // Zerar o contador ao abrir a conversa
   const openDm = useCallback((userId: string) => {
     setIsHomeActive(true);
     setActiveDmUserId(userId);
@@ -380,15 +515,40 @@ export default function PamplexApp() {
     return { ok: true, message: `Pedido de amizade enviado para @${existing.username}!` };
   };
 
-  const handleSendMessage = async (content: string) => {
+  const handleSendMessage = async (content: string, imageFile?: File | null) => {
     if (!currentChatChannel || !user) return;
+
+    let finalContent = content.trim();
+
+    if (imageFile) {
+      const ext = imageFile.name.split(".").pop() || "png";
+      const filePath = `${user.id}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from("chat-attachments")
+        .upload(filePath, imageFile, { contentType: imageFile.type });
+
+      if (uploadError) {
+        console.error("Erro ao enviar imagem:", uploadError.message);
+        return;
+      }
+
+      const { data: publicUrlData } = supabase.storage
+        .from("chat-attachments")
+        .getPublicUrl(filePath);
+
+      const imageUrl = publicUrlData.publicUrl;
+      finalContent = finalContent ? `${finalContent}\n${imageUrl}` : imageUrl;
+    }
+
+    if (!finalContent) return;
 
     const { data, error } = await supabase
       .from("messages")
       .insert({
         channel_id: currentChatChannel.id,
         author_id: user.id,
-        content,
+        content: finalContent,
       })
       .select("id, channel_id, author_id, content, created_at")
       .single();
@@ -427,7 +587,40 @@ export default function PamplexApp() {
     }
   };
 
-  // Reações são só locais por enquanto: não existe tabela de reações no schema.
+  const handleEditMessage = async (messageId: string, newContent: string) => {
+    if (!user) return;
+    const { error } = await supabase
+      .from("messages")
+      .update({ content: newContent, edited_at: new Date().toISOString() })
+      .eq("id", messageId)
+      .eq("author_id", user.id);
+
+    if (error) {
+      console.error("Erro ao editar mensagem:", error.message);
+      return;
+    }
+
+    updateMessages((prev) =>
+      prev.map((m) => (m.id === messageId ? { ...m, content: newContent } : m))
+    );
+  };
+
+  const handleDeleteMessage = async (messageId: string) => {
+    if (!user) return;
+    const { error } = await supabase
+      .from("messages")
+      .delete()
+      .eq("id", messageId)
+      .eq("author_id", user.id);
+
+    if (error) {
+      console.error("Erro ao apagar mensagem:", error.message);
+      return;
+    }
+
+    updateMessages((prev) => prev.filter((m) => m.id !== messageId));
+  };
+
   const handleToggleReaction = (messageId: string, emoji: string) => {
     updateMessages((prev) =>
       prev.map((message) => {
@@ -573,7 +766,6 @@ export default function PamplexApp() {
     setIsDeafened(false);
   };
 
-  // Ensurdecer também silencia o microfone, como nos clientes de voz usuais.
   const handleToggleDeafen = () => {
     setIsDeafened((prev) => {
       const next = !prev;
@@ -585,6 +777,7 @@ export default function PamplexApp() {
   const handleLogout = async () => {
     setUnreadByUserId({});
     seenMessageIdsRef.current.clear();
+    initialMessagesLoadedRef.current = false;
     await supabase.auth.signOut();
   };
 
@@ -619,6 +812,7 @@ export default function PamplexApp() {
               activeDmUserId={activeDmUserId}
               pendingCount={pendingRequestsCount}
               unreadByUserId={unreadByUserId}
+              lastDmByUserId={lastDmByUserId}
               onSelectFriendsTab={() => setActiveDmUserId(null)}
               onSelectDmUser={openDm}
             />
@@ -650,11 +844,16 @@ export default function PamplexApp() {
               <ChatArea
                 channel={currentChatChannel}
                 messages={channelMessages}
+                currentUserId={user.id}
                 currentUserUsername={currentUserProfile.username}
+                typingUsers={typingUsers}
                 showMembers={!isHomeActive && showMembers}
                 onToggleMembers={() => setShowMembers((prev) => !prev)}
                 onSendMessage={handleSendMessage}
+                onEditMessage={handleEditMessage}
+                onDeleteMessage={handleDeleteMessage}
                 onToggleReaction={handleToggleReaction}
+                onTyping={handleTyping}
               />
             )
           )}

@@ -93,10 +93,6 @@ function formatServer(row: ServerRowWithChannels): PamplexServer {
   };
 }
 
-/**
- * Camada única de acesso a dados do Pamplex: sessão, perfis, servidores,
- * mensagens e presença em tempo real. O `page.tsx` só consome este estado.
- */
 export function usePamplexData(): UsePamplexDataResult {
   const supabase = useMemo(() => createClient(), []);
 
@@ -169,7 +165,7 @@ export function usePamplexData(): UsePamplexDataResult {
     }
   }, [user, supabase]);
 
-  // 3. Servidores do utilizador (cria um padrão quando não existe nenhum)
+  // 3. Servidores do utilizador
   const refreshServers = useCallback(async () => {
     if (!user) return;
 
@@ -238,7 +234,7 @@ export function usePamplexData(): UsePamplexDataResult {
     setServers(asRows<ServerRowWithChannels>(serverData).map(formatServer));
   }, [user, supabase]);
 
-  // 4. Mensagens (o RLS filtra o que o utilizador pode ver)
+  // 4. Mensagens
   const refreshMessages = useCallback(async () => {
     if (!user) return;
 
@@ -322,7 +318,12 @@ export function usePamplexData(): UsePamplexDataResult {
 
   const upsertMessage = useCallback((row: MessageRow, authorName: string) => {
     setMessages((prev) => {
-      if (prev.some((m) => m.id === row.id)) return prev;
+      const exists = prev.some((m) => m.id === row.id);
+      if (exists) {
+        return prev.map((m) =>
+          m.id === row.id ? { ...m, content: row.content } : m
+        );
+      }
       return [
         ...prev,
         {
@@ -353,7 +354,7 @@ export function usePamplexData(): UsePamplexDataResult {
     []
   );
 
-  // 5. Realtime: mensagens, amizades, canais e membros
+  // 5. Realtime: INSERT, UPDATE e DELETE de mensagens + amizades + canais
   useEffect(() => {
     if (!user) return;
 
@@ -364,7 +365,8 @@ export function usePamplexData(): UsePamplexDataResult {
         { event: "INSERT", schema: "public", table: "messages" },
         async (payload) => {
           const newRow = (payload.new ?? {}) as Record<string, unknown>;
-          const authorId = typeof newRow.author_id === "string" ? newRow.author_id : "";
+          const authorId =
+            typeof newRow.author_id === "string" ? newRow.author_id : "";
           let authorName = "Membro Pamplex";
 
           if (authorId === user.id) {
@@ -391,6 +393,29 @@ export function usePamplexData(): UsePamplexDataResult {
             },
             authorName
           );
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "messages" },
+        (payload) => {
+          const updated = (payload.new ?? {}) as Record<string, unknown>;
+          const id = String(updated.id ?? "");
+          const content = String(updated.content ?? "");
+          if (!id) return;
+          setMessages((prev) =>
+            prev.map((m) => (m.id === id ? { ...m, content } : m))
+          );
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "DELETE", schema: "public", table: "messages" },
+        (payload) => {
+          const deleted = (payload.old ?? {}) as Record<string, unknown>;
+          const id = String(deleted.id ?? "");
+          if (!id) return;
+          setMessages((prev) => prev.filter((m) => m.id !== id));
         }
       )
       .subscribe();
@@ -422,7 +447,14 @@ export function usePamplexData(): UsePamplexDataResult {
       supabase.removeChannel(friendsChannel);
       supabase.removeChannel(channelsChannel);
     };
-  }, [user, supabase, currentUserProfile, upsertMessage, refreshProfiles, refreshServers]);
+  }, [
+    user,
+    supabase,
+    currentUserProfile,
+    upsertMessage,
+    refreshProfiles,
+    refreshServers,
+  ]);
 
   // 6. Presença real
   useEffect(() => {
@@ -479,7 +511,7 @@ export function usePamplexData(): UsePamplexDataResult {
     };
   }, [user, joinServerById, refreshServers, refreshMessages]);
 
-  // 8. Carga inicial e recarga quando o conjunto de dados base muda
+  // 8. Carga inicial
   useEffect(() => {
     refreshProfiles();
   }, [refreshProfiles]);

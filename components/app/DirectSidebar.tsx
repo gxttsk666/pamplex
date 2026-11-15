@@ -4,11 +4,17 @@ import React, { useMemo, useState } from "react";
 import { MessageSquare, Search, UserPlus, Users, X } from "lucide-react";
 import { PamplexMember, UserStatus } from "./types";
 
+export interface DmPreview {
+  text: string;
+  timestamp: number;
+}
+
 interface DirectSidebarProps {
   friends: PamplexMember[];
   activeDmUserId: string | null;
   pendingCount: number;
   unreadByUserId: Record<string, number>;
+  lastDmByUserId: Record<string, DmPreview>;
   onSelectFriendsTab: () => void;
   onSelectDmUser: (userId: string) => void;
 }
@@ -25,25 +31,34 @@ export function DirectSidebar({
   activeDmUserId,
   pendingCount,
   unreadByUserId,
+  lastDmByUserId,
   onSelectFriendsTab,
   onSelectDmUser,
 }: DirectSidebarProps) {
   const [query, setQuery] = useState("");
 
-  const acceptedFriends = useMemo(
-    () => friends.filter((f) => f.relation === "friend"),
-    [friends]
-  );
+  const sortedFriends = useMemo(() => {
+    const accepted = friends.filter((f) => f.relation === "friend");
+    return [...accepted].sort((a, b) => {
+      const tsA = lastDmByUserId[a.id]?.timestamp ?? 0;
+      const tsB = lastDmByUserId[b.id]?.timestamp ?? 0;
+      if (tsA !== tsB) return tsB - tsA;
+      const onlineA = a.status !== "offline" ? 1 : 0;
+      const onlineB = b.status !== "offline" ? 1 : 0;
+      if (onlineA !== onlineB) return onlineB - onlineA;
+      return a.name.localeCompare(b.name, "pt-BR");
+    });
+  }, [friends, lastDmByUserId]);
 
   const filteredFriends = useMemo(() => {
     const clean = query.trim().toLowerCase();
-    if (!clean) return acceptedFriends;
-    return acceptedFriends.filter(
+    if (!clean) return sortedFriends;
+    return sortedFriends.filter(
       (f) =>
         f.name.toLowerCase().includes(clean) ||
         f.username.toLowerCase().includes(clean)
     );
-  }, [acceptedFriends, query]);
+  }, [sortedFriends, query]);
 
   return (
     <aside
@@ -73,9 +88,8 @@ export function DirectSidebar({
         </div>
       </div>
 
-      {/* Navegação Principal (Amigos + Conversas) */}
+      {/* Navegação Principal */}
       <div className="flex-1 overflow-y-auto px-2.5 py-3 pb-24 flex flex-col gap-3">
-        {/* Botão Amigos */}
         <button
           type="button"
           onClick={onSelectFriendsTab}
@@ -105,7 +119,6 @@ export function DirectSidebar({
           )}
         </button>
 
-        {/* Cabeçalho da Lista de Mensagens Diretas */}
         <div className="flex items-center justify-between px-2 pt-1 text-[11px] font-semibold uppercase tracking-wider text-pamplex-text-muted">
           <span>Mensagens Diretas</span>
           <button
@@ -118,7 +131,6 @@ export function DirectSidebar({
           </button>
         </div>
 
-        {/* Lista de Conversas 1-a-1 */}
         <div className="flex flex-col gap-0.5">
           {filteredFriends.length === 0 ? (
             <p className="px-2 py-4 text-center text-xs text-pamplex-text-muted">
@@ -128,6 +140,10 @@ export function DirectSidebar({
             filteredFriends.map((friend) => {
               const isSelected = activeDmUserId === friend.id;
               const unread = unreadByUserId[friend.id] ?? 0;
+              const lastDm = lastDmByUserId[friend.id];
+              const subtitle = lastDm
+                ? lastDm.text
+                : friend.customStatus ?? `@${friend.username}`;
 
               return (
                 <button
@@ -169,8 +185,15 @@ export function DirectSidebar({
                     >
                       {friend.name}
                     </span>
-                    <span className="truncate text-[11px] text-pamplex-text-muted">
-                      {friend.customStatus ?? `@${friend.username}`}
+                    <span
+                      className={[
+                        "truncate text-[11px]",
+                        unread > 0
+                          ? "font-medium text-pamplex-text-secondary"
+                          : "text-pamplex-text-muted",
+                      ].join(" ")}
+                    >
+                      {subtitle}
                     </span>
                   </div>
 
@@ -188,7 +211,7 @@ export function DirectSidebar({
         </div>
       </div>
 
-      {/* Rodapé com Versão */}
+      {/* Rodapé */}
       <div className="flex h-11 shrink-0 items-center justify-between border-t border-pamplex-border px-3 text-[11px] text-pamplex-text-muted">
         <span>Início • DMs</span>
         <span className="text-pamplex-turquesa font-medium">Pamplex</span>

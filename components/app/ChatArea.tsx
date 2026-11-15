@@ -2,11 +2,16 @@
 
 import React, { useEffect, useRef, useState } from "react";
 import {
+  Check,
   Hash,
-  Plus,
+  ImagePlus,
+  Loader2,
+  Pencil,
   Send,
   SmilePlus,
+  Trash2,
   Users,
+  X,
 } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 import { PamplexChannel, PamplexMessage } from "./types";
@@ -14,16 +19,21 @@ import { PamplexChannel, PamplexMessage } from "./types";
 interface ChatAreaProps {
   channel: PamplexChannel;
   messages: PamplexMessage[];
-  /** Username do utilizador atual, usado para destacar menções reais. */
+  currentUserId: string;
   currentUserUsername: string;
+  typingUsers: string[];
   showMembers: boolean;
   onToggleMembers: () => void;
-  onSendMessage: (content: string) => void;
+  onSendMessage: (content: string, imageFile?: File | null) => Promise<void> | void;
+  onEditMessage: (messageId: string, newContent: string) => Promise<void> | void;
+  onDeleteMessage: (messageId: string) => Promise<void> | void;
   onToggleReaction: (messageId: string, emoji: string) => void;
+  onTyping: () => void;
 }
 
 const QUICK_EMOJIS = ["👍", "💚", "🚀", "🔥", "😂"];
 const FIVE_MINUTES_MS = 5 * 60 * 1000;
+const IMAGE_URL_REGEX = /(https?:\/\/[^\s]+\.(?:png|jpe?g|gif|webp|avif)(?:\?[^\s]*)?)/gi;
 
 function formatTime(timestamp: number): string {
   return new Date(timestamp).toLocaleTimeString("pt-BR", {
@@ -32,8 +42,8 @@ function formatTime(timestamp: number): string {
   });
 }
 
-function renderMessageContent(content: string) {
-  const parts = content.split(/(@[a-zA-Z0-9_]+)/g);
+function renderTextWithMentions(text: string) {
+  const parts = text.split(/(@[a-zA-Z0-9_]+)/g);
   return parts.map((part, index) => {
     if (part.startsWith("@")) {
       return (
@@ -49,30 +59,137 @@ function renderMessageContent(content: string) {
   });
 }
 
+function renderMessageContent(content: string) {
+  const imageMatches = content.match(IMAGE_URL_REGEX) ?? [];
+  const textWithoutImages = content.replace(IMAGE_URL_REGEX, "").trim();
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      {textWithoutImages && (
+        <p className="text-sm text-pamplex-text-primary leading-relaxed break-words whitespace-pre-wrap">
+          {renderTextWithMentions(textWithoutImages)}
+        </p>
+      )}
+      {imageMatches.map((url, idx) => (
+        <a
+          key={`${url}-${idx}`}
+          href={url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mt-0.5 block w-fit max-w-xs sm:max-w-sm overflow-hidden rounded-[10px] border border-pamplex-border bg-pamplex-surface"
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={url}
+            alt="Anexo enviado no chat"
+            className="max-h-72 w-auto object-contain"
+            loading="lazy"
+          />
+        </a>
+      ))}
+    </div>
+  );
+}
+
 export function ChatArea({
   channel,
   messages,
+  currentUserId,
   currentUserUsername,
+  typingUsers,
   showMembers,
   onToggleMembers,
   onSendMessage,
+  onEditMessage,
+  onDeleteMessage,
   onToggleReaction,
+  onTyping,
 }: ChatAreaProps) {
   const [draft, setDraft] = useState("");
+  const [selectedImage, setSelectedImage] = useState<File | null>(null);
+  const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
+  const [isSending, setIsSending] = useState(false);
+
   const [emojiPickerFor, setEmojiPickerFor] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState("");
+
   const bottomRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages.length, channel.id]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  useEffect(() => {
+    if (!selectedImage) {
+      setImagePreviewUrl(null);
+      return;
+    }
+    const url = URL.createObjectURL(selectedImage);
+    setImagePreviewUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [selectedImage]);
+
+  const handleImagePick = (file: File | undefined | null) => {
+    if (!file) return;
+    if (!file.type.startsWith("image/")) return;
+    setSelectedImage(file);
+  };
+
+  const handlePaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (const item of Array.from(items)) {
+      if (item.type.startsWith("image/")) {
+        const file = item.getAsFile();
+        if (file) {
+          e.preventDefault();
+          handleImagePick(file);
+          break;
+        }
+      }
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const clean = draft.trim();
-    if (!clean) return;
-    onSendMessage(clean);
-    setDraft("");
+    if ((!clean && !selectedImage) || isSending) return;
+
+    setIsSending(true);
+    try {
+      await onSendMessage(clean, selectedImage);
+      setDraft("");
+      setSelectedImage(null);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    } finally {
+      setIsSending(false);
+    }
   };
+
+  const startEditing = (msg: PamplexMessage) => {
+    setEditingId(msg.id);
+    setEditDraft(msg.content);
+    setEmojiPickerFor(null);
+  };
+
+  const saveEdit = async (messageId: string) => {
+    const clean = editDraft.trim();
+    if (!clean) return;
+    await onEditMessage(messageId, clean);
+    setEditingId(null);
+    setEditDraft("");
+  };
+
+  const typingLabel =
+    typingUsers.length === 1
+      ? `${typingUsers[0]} está digitando...`
+      : typingUsers.length === 2
+        ? `${typingUsers[0]} e ${typingUsers[1]} estão digitando...`
+        : typingUsers.length > 2
+          ? "Várias pessoas estão digitando..."
+          : null;
 
   return (
     <section
@@ -108,8 +225,7 @@ export function ChatArea({
       </header>
 
       {/* Fluxo de Mensagens */}
-      <div className="flex-1 overflow-y-auto px-5 py-4 pb-24 flex flex-col gap-1">
-        {/* Boas-vindas no topo do canal */}
+      <div className="flex-1 overflow-y-auto px-5 py-4 pb-6 flex flex-col gap-1">
         <div className="mb-4 border-b border-pamplex-border pb-4">
           <div className="flex h-12 w-12 items-center justify-center rounded-[14px] bg-pamplex-surface border border-pamplex-border text-pamplex-turquesa mb-3">
             <Hash className="h-6 w-6" />
@@ -129,8 +245,13 @@ export function ChatArea({
             prev.authorId === msg.authorId &&
             msg.timestamp - prev.timestamp <= FIVE_MINUTES_MS;
 
+          const isOwnMessage = msg.authorId === currentUserId;
+          const isEditing = editingId === msg.id;
+
           const mentionsCurrentUser = currentUserUsername
-            ? msg.content.toLowerCase().includes(`@${currentUserUsername.toLowerCase()}`)
+            ? msg.content
+                .toLowerCase()
+                .includes(`@${currentUserUsername.toLowerCase()}`)
             : false;
 
           return (
@@ -144,7 +265,6 @@ export function ChatArea({
                   : "",
               ].join(" ")}
             >
-              {/* Avatar ou espaço alinhado */}
               {isGrouped ? (
                 <span
                   suppressHydrationWarning
@@ -163,7 +283,6 @@ export function ChatArea({
                 </div>
               )}
 
-              {/* Conteúdo da mensagem */}
               <div className="flex-1 min-w-0">
                 {!isGrouped && (
                   <div className="flex items-center gap-2 mb-0.5">
@@ -188,11 +307,44 @@ export function ChatArea({
                   </div>
                 )}
 
-                <p className="text-sm text-pamplex-text-primary leading-relaxed break-words">
-                  {renderMessageContent(msg.content)}
-                </p>
+                {isEditing ? (
+                  <div className="mt-1 flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={editDraft}
+                      onChange={(e) => setEditDraft(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          saveEdit(msg.id);
+                        } else if (e.key === "Escape") {
+                          setEditingId(null);
+                        }
+                      }}
+                      autoFocus
+                      className="flex-1 rounded-[8px] border border-pamplex-turquesa bg-pamplex-dark px-2.5 py-1 text-sm text-pamplex-text-primary focus:outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => saveEdit(msg.id)}
+                      title="Guardar edição"
+                      className="rounded-[6px] bg-pamplex-turquesa p-1.5 text-pamplex-dark hover:bg-pamplex-aqua cursor-pointer"
+                    >
+                      <Check className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setEditingId(null)}
+                      title="Cancelar"
+                      className="rounded-[6px] border border-pamplex-border bg-pamplex-surface p-1.5 text-pamplex-text-secondary hover:text-pamplex-text-primary cursor-pointer"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                ) : (
+                  renderMessageContent(msg.content)
+                )}
 
-                {/* Reações */}
                 {msg.reactions.length > 0 && (
                   <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                     {msg.reactions.map((reaction) => (
@@ -215,39 +367,62 @@ export function ChatArea({
                 )}
               </div>
 
-              {/* Barra rápida de reação ao passar o mouse */}
-              <div className="relative flex items-center">
-                <button
-                  type="button"
-                  onClick={() =>
-                    setEmojiPickerFor((prevId) =>
-                      prevId === msg.id ? null : msg.id
-                    )
-                  }
-                  title="Adicionar reação"
-                  className="opacity-0 group-hover:opacity-100 rounded-[6px] border border-pamplex-border bg-pamplex-surface p-1 text-pamplex-text-secondary hover:text-pamplex-turquesa transition-all cursor-pointer"
-                >
-                  <SmilePlus className="h-3.5 w-3.5" />
-                </button>
+              {/* Ações rápidas ao passar o mouse */}
+              {!isEditing && (
+                <div className="relative flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setEmojiPickerFor((prevId) =>
+                        prevId === msg.id ? null : msg.id
+                      )
+                    }
+                    title="Adicionar reação"
+                    className="rounded-[6px] border border-pamplex-border bg-pamplex-surface p-1 text-pamplex-text-secondary hover:text-pamplex-turquesa cursor-pointer"
+                  >
+                    <SmilePlus className="h-3.5 w-3.5" />
+                  </button>
 
-                {emojiPickerFor === msg.id && (
-                  <div className="absolute right-0 top-7 z-20 flex items-center gap-1 rounded-[8px] border border-pamplex-border bg-pamplex-surface p-1 shadow-lg">
-                    {QUICK_EMOJIS.map((emoji) => (
+                  {isOwnMessage && (
+                    <>
                       <button
-                        key={emoji}
                         type="button"
-                        onClick={() => {
-                          onToggleReaction(msg.id, emoji);
-                          setEmojiPickerFor(null);
-                        }}
-                        className="rounded-[6px] px-1.5 py-0.5 text-sm hover:bg-pamplex-elevated cursor-pointer"
+                        onClick={() => startEditing(msg)}
+                        title="Editar mensagem"
+                        className="rounded-[6px] border border-pamplex-border bg-pamplex-surface p-1 text-pamplex-text-secondary hover:text-pamplex-turquesa cursor-pointer"
                       >
-                        {emoji}
+                        <Pencil className="h-3.5 w-3.5" />
                       </button>
-                    ))}
-                  </div>
-                )}
-              </div>
+                      <button
+                        type="button"
+                        onClick={() => onDeleteMessage(msg.id)}
+                        title="Apagar mensagem"
+                        className="rounded-[6px] border border-pamplex-border bg-pamplex-surface p-1 text-pamplex-text-secondary hover:text-red-400 cursor-pointer"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </>
+                  )}
+
+                  {emojiPickerFor === msg.id && (
+                    <div className="absolute right-0 top-7 z-20 flex items-center gap-1 rounded-[8px] border border-pamplex-border bg-pamplex-surface p-1 shadow-lg">
+                      {QUICK_EMOJIS.map((emoji) => (
+                        <button
+                          key={emoji}
+                          type="button"
+                          onClick={() => {
+                            onToggleReaction(msg.id, emoji);
+                            setEmojiPickerFor(null);
+                          }}
+                          className="rounded-[6px] px-1.5 py-0.5 text-sm hover:bg-pamplex-elevated cursor-pointer"
+                        >
+                          {emoji}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           );
         })}
@@ -255,36 +430,80 @@ export function ChatArea({
         <div ref={bottomRef} />
       </div>
 
-      {/* Caixa de Envio de Mensagem */}
+      {/* Caixa de Envio + Preview de Imagem + Digitando */}
       <form
         onSubmit={handleSubmit}
-        className="shrink-0 px-5 pb-20 pt-2 bg-pamplex-bg"
+        className="shrink-0 px-5 pb-20 pt-1 bg-pamplex-bg"
       >
+        {imagePreviewUrl && (
+          <div className="mb-2 inline-flex items-start gap-2 rounded-[10px] border border-pamplex-border bg-pamplex-surface p-2">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={imagePreviewUrl}
+              alt="Preview do anexo"
+              className="h-20 w-auto rounded-[6px] object-cover"
+            />
+            <button
+              type="button"
+              onClick={() => setSelectedImage(null)}
+              title="Remover imagem"
+              className="rounded-full bg-pamplex-dark p-1 text-pamplex-text-muted hover:text-red-400 cursor-pointer"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
+
         <div className="flex items-center gap-2 rounded-[12px] border border-pamplex-border bg-pamplex-surface px-3 py-2 focus-within:border-pamplex-turquesa transition-colors">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            onChange={(e) => handleImagePick(e.target.files?.[0])}
+            className="hidden"
+          />
+
           <button
             type="button"
-            title="Anexar arquivo"
+            onClick={() => fileInputRef.current?.click()}
+            title="Anexar imagem (ou cole com Ctrl+V)"
             className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[8px] bg-pamplex-elevated text-pamplex-text-secondary hover:text-pamplex-turquesa transition-colors cursor-pointer"
           >
-            <Plus className="h-4 w-4" />
+            <ImagePlus className="h-4 w-4" />
           </button>
 
           <input
             type="text"
             value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            placeholder={`Conversar em #${channel.name}...`}
+            onChange={(e) => {
+              setDraft(e.target.value);
+              if (e.target.value.trim()) onTyping();
+            }}
+            onPaste={handlePaste}
+            placeholder={`Conversar em #${channel.name}... (cole prints com Ctrl+V)`}
             className="flex-1 bg-transparent text-sm text-pamplex-text-primary placeholder:text-pamplex-text-muted focus:outline-none"
           />
 
           <button
             type="submit"
-            disabled={!draft.trim()}
+            disabled={(!draft.trim() && !selectedImage) || isSending}
             title="Enviar mensagem"
             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[8px] bg-pamplex-turquesa text-pamplex-dark transition-all hover:bg-pamplex-aqua disabled:opacity-35 disabled:pointer-events-none cursor-pointer"
           >
-            <Send className="h-3.5 w-3.5" />
+            {isSending ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Send className="h-3.5 w-3.5" />
+            )}
           </button>
+        </div>
+
+        <div className="mt-1 h-4 px-1">
+          {typingLabel && (
+            <p className="text-[11px] font-medium text-pamplex-turquesa animate-pulse">
+              {typingLabel}
+            </p>
+          )}
         </div>
       </form>
     </section>
