@@ -170,6 +170,7 @@ export function usePamplexData(): UsePamplexDataResult {
 
   const creatingDefaultServerRef = useRef(false);
   const requestedMembersServerRef = useRef("");
+  const reactionsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Refs para ler dados atuais dentro de callbacks do Realtime (atualizadas em effects)
   const profilesRef = useRef(profiles);
@@ -545,15 +546,21 @@ export function usePamplexData(): UsePamplexDataResult {
           if (authorId === userId) {
             authorName = currentUserProfileRef.current.name;
           } else {
-            const { data: senderProfile } = await supabase
-              .from("profiles")
-              .select("display_name, username")
-              .eq("id", authorId)
-              .maybeSingle();
-            const sender = asRows<ProfileLike>(
-              senderProfile ? [senderProfile] : []
-            )[0];
-            if (sender) authorName = profileDisplayName(sender);
+            // Usa os perfis já carregados; só consulta o banco se o autor for novo
+            const cached = profilesRef.current.find((p) => p.id === authorId);
+            if (cached) {
+              authorName = profileDisplayName(cached);
+            } else {
+              const { data: senderProfile } = await supabase
+                .from("profiles")
+                .select("display_name, username")
+                .eq("id", authorId)
+                .maybeSingle();
+              const sender = asRows<ProfileLike>(
+                senderProfile ? [senderProfile] : []
+              )[0];
+              if (sender) authorName = profileDisplayName(sender);
+            }
           }
 
           upsertMessage(
@@ -596,7 +603,12 @@ export function usePamplexData(): UsePamplexDataResult {
         "postgres_changes",
         { event: "*", schema: "public", table: "message_reactions" },
         () => {
-          refreshMessages();
+          // Várias reações seguidas viram uma única recarga
+          if (reactionsTimerRef.current) clearTimeout(reactionsTimerRef.current);
+          reactionsTimerRef.current = setTimeout(() => {
+            reactionsTimerRef.current = null;
+            refreshMessages();
+          }, 400);
         }
       )
       .on(
@@ -634,6 +646,10 @@ export function usePamplexData(): UsePamplexDataResult {
       .subscribe();
 
     return () => {
+      if (reactionsTimerRef.current) {
+        clearTimeout(reactionsTimerRef.current);
+        reactionsTimerRef.current = null;
+      }
       supabase.removeChannel(channel);
     };
   }, [userId, supabase, upsertMessage, refreshMessages, refreshProfiles, refreshServers]);

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   LiveKitRoom,
   RoomAudioRenderer,
@@ -18,26 +18,17 @@ interface VoiceRoomModalProps {
 }
 
 function VoiceRoomInner({ onDisconnect }: { onDisconnect: () => void }) {
-  const { localParticipant } = useLocalParticipant();
-  const [isMuted, setIsMuted] = useState(false);
+  // `isMicrophoneEnabled` já é reativo: não precisa de polling
+  const { isMicrophoneEnabled } = useLocalParticipant();
+  const previousMicRef = useRef<boolean | null>(null);
 
   useEffect(() => {
-    if (!localParticipant) return;
-    const checkMicrophone = () => {
-      const muted = !localParticipant.isMicrophoneEnabled;
-      if (muted !== isMuted) {
-        if (muted) {
-          playDigitalMute();
-        } else {
-          playDigitalUnmute();
-        }
-        setIsMuted(muted);
-      }
-    };
-
-    const interval = setInterval(checkMicrophone, 300);
-    return () => clearInterval(interval);
-  }, [localParticipant, isMuted]);
+    const previous = previousMicRef.current;
+    previousMicRef.current = isMicrophoneEnabled;
+    if (previous === null || previous === isMicrophoneEnabled) return; // ignora o estado inicial
+    if (isMicrophoneEnabled) playDigitalUnmute();
+    else playDigitalMute();
+  }, [isMicrophoneEnabled]);
 
   return (
     <div className="flex flex-col gap-2 rounded-2xl border border-pamplex-border bg-pamplex-surface p-4 shadow-2xl w-80 text-pamplex-text-primary">
@@ -69,6 +60,7 @@ function VoiceRoomInner({ onDisconnect }: { onDisconnect: () => void }) {
 
 export function VoiceRoomModal({ roomName, username, onDisconnect }: VoiceRoomModalProps) {
   const [token, setToken] = useState<string | null>(null);
+  const [serverUrl, setServerUrl] = useState<string | undefined>(undefined);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const supabase = useMemo(() => createClient(), []);
 
@@ -97,6 +89,7 @@ export function VoiceRoomModal({ roomName, username, onDisconnect }: VoiceRoomMo
         }
 
         playDigitalConnect();
+        setServerUrl(data.url ?? process.env.NEXT_PUBLIC_LIVEKIT_URL);
         setToken(data.token);
       } catch (err) {
         console.error("Erro ao obter token LiveKit:", err);
@@ -142,7 +135,7 @@ export function VoiceRoomModal({ roomName, username, onDisconnect }: VoiceRoomMo
         video={false}
         audio={true}
         token={token}
-        serverUrl={process.env.NEXT_PUBLIC_LIVEKIT_URL}
+        serverUrl={serverUrl}
         onError={(err) => {
           console.error("Erro LiveKitRoom:", err);
           setErrorMsg(err.message);

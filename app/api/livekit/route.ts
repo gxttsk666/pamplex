@@ -17,9 +17,20 @@ export async function GET(req: Request) {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-  if (!apiKey || !apiSecret || !wsUrl || !supabaseUrl || !supabaseAnonKey) {
+  const missing = [
+    !apiKey && "LIVEKIT_API_KEY",
+    !apiSecret && "LIVEKIT_API_SECRET",
+    !wsUrl && "NEXT_PUBLIC_LIVEKIT_URL",
+    !supabaseUrl && "NEXT_PUBLIC_SUPABASE_URL",
+    !supabaseAnonKey && "NEXT_PUBLIC_SUPABASE_ANON_KEY",
+  ].filter(Boolean) as string[];
+
+  if (missing.length > 0 || !apiKey || !apiSecret || !wsUrl || !supabaseUrl || !supabaseAnonKey) {
+    // Só os NOMES das variáveis em falta; nunca os valores
     return NextResponse.json(
-      { error: "Servidor não configurado corretamente nas variáveis de ambiente." },
+      {
+        error: `Variáveis de ambiente em falta no servidor: ${missing.join(", ")}. Defina-as na Vercel e faça um novo deploy.`,
+      },
       { status: 500 }
     );
   }
@@ -78,7 +89,7 @@ export async function GET(req: Request) {
     at.addGrant({ roomJoin: true, room, canPublish: true, canSubscribe: true });
 
     const token = await at.toJwt();
-    return NextResponse.json({ token });
+    return NextResponse.json({ token, url: wsUrl });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Erro ao gerar token.";
     return NextResponse.json({ error: message }, { status: 500 });
