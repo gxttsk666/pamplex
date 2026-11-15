@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   LiveKitRoom,
   RoomAudioRenderer,
@@ -8,6 +8,7 @@ import {
   useLocalParticipant,
 } from "@livekit/components-react";
 import "@livekit/components-styles";
+import { createClient } from "@/lib/supabase/client";
 import { playDigitalConnect, playDigitalDisconnect, playDigitalMute, playDigitalUnmute } from "@/lib/sounds";
 
 interface VoiceRoomModalProps {
@@ -69,18 +70,46 @@ function VoiceRoomInner({ onDisconnect }: { onDisconnect: () => void }) {
 
 export function VoiceRoomModal({ roomName, username, onDisconnect }: VoiceRoomModalProps) {
   const [token, setToken] = useState<string | null>(null);
+  const supabase = useMemo(() => createClient(), []);
 
   useEffect(() => {
+    let active = true;
+
     // Toca o som de Digital Connect assim que entra na sala
     playDigitalConnect();
 
-    fetch(`/api/livekit?room=${encodeURIComponent(roomName)}&username=${encodeURIComponent(username)}`)
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.token) setToken(data.token);
-      })
-      .catch((err) => console.error("Erro ao obter token LiveKit:", err));
-  }, [roomName, username]);
+    const fetchToken = async () => {
+      try {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+
+        const res = await fetch(
+          `/api/livekit?room=${encodeURIComponent(roomName)}&username=${encodeURIComponent(username)}`,
+          { headers: { Authorization: `Bearer ${session?.access_token ?? ""}` } }
+        );
+        const data = await res.json();
+
+        if (!active) return;
+        if (!res.ok || !data.token) {
+          console.error("Erro ao obter token LiveKit:", data.error ?? res.status);
+          onDisconnect();
+          return;
+        }
+        setToken(data.token);
+      } catch (err) {
+        console.error("Erro ao obter token LiveKit:", err);
+        if (active) onDisconnect();
+      }
+    };
+
+    fetchToken();
+    return () => {
+      active = false;
+    };
+    // onDisconnect muda a cada render do pai; só queremos refazer o token ao trocar de sala
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roomName, username, supabase]);
 
   if (!token) {
     return (

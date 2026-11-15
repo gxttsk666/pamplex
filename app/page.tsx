@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { LogOut, Plus, UserPlus, Phone, Video } from "lucide-react";
+import { LogOut, Plus, UserPlus, Phone } from "lucide-react";
 import { AuthModal } from "@/components/auth/AuthModal";
 import { ServerRail } from "@/components/app/ServerRail";
 import { ChannelSidebar } from "@/components/app/ChannelSidebar";
@@ -77,6 +77,9 @@ function playNotificationTone() {
     gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.16);
     osc.connect(gain);
     gain.connect(ctx.destination);
+    osc.onended = () => {
+      ctx.close().catch(() => {});
+    };
     osc.start();
     osc.stop(ctx.currentTime + 0.16);
   } catch {
@@ -95,6 +98,8 @@ export default function PamplexApp() {
     serverMemberships,
     messages,
     onlineIds,
+    invitedServerId,
+    membersVersion,
     joinServerById,
     fetchServerMembers,
     refreshServers,
@@ -183,9 +188,18 @@ export default function PamplexApp() {
     setIsAuthModalOpen(!user);
   }, [authLoading, user]);
 
+  // Entrou por um convite pendente (aberto antes de fazer login): abre esse servidor
+  useEffect(() => {
+    if (!invitedServerId) return;
+    setIsHomeActive(false);
+    setActiveServerId(invitedServerId);
+    setActiveChannelId("");
+  }, [invitedServerId]);
+
+  // Membros do servidor ativo (recarrega quando alguém entra/sai via Realtime)
   useEffect(() => {
     if (activeServerId) fetchServerMembers(activeServerId);
-  }, [activeServerId, fetchServerMembers, serverMemberships.length]);
+  }, [activeServerId, fetchServerMembers, membersVersion]);
 
   const members = useMemo<PamplexMember[]>(() => {
     if (!user) return [];
@@ -571,7 +585,9 @@ export default function PamplexApp() {
     if (!finalContent) return;
 
     const payloadContent = replyTo
-      ? `[reply:${replyTo.id}:${replyTo.authorName}:${replyTo.content.replace(/\n/g, " ")}]${finalContent}`
+      ? `[reply:${replyTo.id}:${encodeURIComponent(replyTo.authorName)}:${encodeURIComponent(
+          replyTo.content.replace(/\n/g, " ").slice(0, 160)
+        )}]${finalContent}`
       : finalContent;
 
     const { data, error } = await supabase
@@ -598,7 +614,7 @@ export default function PamplexApp() {
         created_at: string;
       };
 
-      let extractedReply = replyTo
+      const extractedReply = replyTo
         ? {
             id: replyTo.id,
             authorName: replyTo.authorName,
@@ -783,11 +799,9 @@ export default function PamplexApp() {
   };
 
   const handleToggleDeafen = () => {
-    setIsDeafened((prev) => {
-      const next = !prev;
-      setIsMuted(next ? true : isMuted);
-      return next;
-    });
+    const next = !isDeafened;
+    setIsDeafened(next);
+    if (next) setIsMuted(true);
   };
 
   const handleLogout = async () => {

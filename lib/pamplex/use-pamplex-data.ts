@@ -21,11 +21,15 @@ import {
   type ServerMembershipRow,
   type ServerRowWithChannels,
 } from "@/lib/supabase/rows";
+import { PENDING_INVITE_KEY } from "@/lib/pamplex/nav";
 
 const AUTHOR_COLOR = "bg-pamplex-turquesa text-pamplex-dark";
 const NO_PROFILES: ProfileRow[] = [];
 const NO_FRIENDSHIPS: FriendshipRow[] = [];
 const NO_SERVER_MEMBERS: ServerMemberRow[] = [];
+const NO_MESSAGES: PamplexMessage[] = [];
+const NO_SERVERS: PamplexServer[] = [];
+const NO_ONLINE: Set<string> = new Set();
 
 export interface ProfileLike {
   id: string;
@@ -49,6 +53,8 @@ interface UsePamplexDataResult {
   serverMemberships: ServerMemberRow[];
   messages: PamplexMessage[];
   onlineIds: Set<string>;
+  invitedServerId: string | null;
+  membersVersion: number;
   joinServerById: (
     serverId: string
   ) => Promise<{ ok: true; serverId: string } | { ok: false; message: string }>;
@@ -68,6 +74,14 @@ function profileDisplayName(profile: ProfileLike): string {
   return profile.display_name || profile.username || "Membro";
 }
 
+function safeDecode(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
 function parseMessageContentAndReply(rawContent: string): {
   content: string;
   replyTo?: MessageReplyInfo;
@@ -81,8 +95,8 @@ function parseMessageContentAndReply(rawContent: string): {
       const header = content.slice(7, closeBracketIdx);
       const parts = header.split(":");
       const replyId = parts[0];
-      const replyAuthor = parts[1];
-      const replyText = parts.slice(2).join(":");
+      const replyAuthor = safeDecode(parts[1] ?? "");
+      const replyText = safeDecode(parts.slice(2).join(":"));
 
       replyTo = {
         id: replyId,
@@ -98,11 +112,9 @@ function parseMessageContentAndReply(rawContent: string): {
     .split("\n")
     .filter((line) => {
       const trimmed = line.trim();
-      return !(
-        trimmed.startsWith("> **@") ||
-        trimmed.startsWith("> **") ||
-        (trimmed.startsWith(">") && trimmed.includes(":"))
-      );
+      // Só remove o formato antigo de citação ("> **@nome**: ..."); não apaga
+      // linhas normais que o utilizador escreveu começando com ">".
+      return !trimmed.startsWith("> **");
     })
     .join("\n")
     .trim();
@@ -150,14 +162,22 @@ export function usePamplexData(): UsePamplexDataResult {
   const [messages, setMessages] = useState<PamplexMessage[]>([]);
   const [onlineIds, setOnlineIds] = useState<Set<string>>(new Set());
 
+  const [membersVersion, setMembersVersion] = useState(0);
+  const [invitedServerId, setInvitedServerId] = useState<string | null>(null);
+
+  // Usar só o id evita refazer fetch/subscrições quando o token é renovado
+  const userId = user?.id ?? null;
+
   const creatingDefaultServerRef = useRef(false);
+  const requestedMembersServerRef = useRef("");
 
-  // Refs para manter dados atualizados sem disparar re-renders no Realtime
+  // Refs para ler dados atuais dentro de callbacks do Realtime (atualizadas em effects)
   const profilesRef = useRef(profiles);
-  profilesRef.current = profiles;
+  const messagesRef = useRef(messages);
 
-  const userRef = useRef(user);
-  userRef.current = user;
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
 
   useEffect(() => {
     let active = true;
@@ -196,11 +216,13 @@ export function usePamplexData(): UsePamplexDataResult {
   }, [user]);
 
   const currentUserProfileRef = useRef(currentUserProfile);
-  currentUserProfileRef.current = currentUserProfile;
+  useEffect(() => {
+    currentUserProfileRef.current = currentUserProfile;
+  }, [currentUserProfile]);
 
   const refreshProfiles = useCallback(async () => {
-    const currentUser = userRef.current;
-    if (!currentUser) return;
+    if (!userId) return;
+    const currentUser = { id: userId };
 
     const [profilesResult, friendshipsResult] = await Promise.all([
       supabase.from("profiles").select("id, display_name, username, status"),
@@ -211,16 +233,18 @@ export function usePamplexData(): UsePamplexDataResult {
     ]);
 
     if (profilesResult.data) {
-      setProfiles(asRows<ProfileRow>(profilesResult.data));
+      const rows = asRows<ProfileRow>(profilesResult.data);
+      profilesRef.current = rows;
+      setProfiles(rows);
     }
     if (friendshipsResult.data) {
       setFriendships(asRows<FriendshipRow>(friendshipsResult.data));
     }
-  }, [supabase]);
+  }, [supabase, userId]);
 
   const refreshServers = useCallback(async () => {
-    const currentUser = userRef.current;
-    if (!currentUser) return;
+    if (!userId) return;
+    const currentUser = { id: userId };
 
     const { data: membershipData } = await supabase
       .from("server_members")
@@ -285,12 +309,12 @@ export function usePamplexData(): UsePamplexDataResult {
       .order("created_at", { ascending: true });
 
     setServers(asRows<ServerRowWithChannels>(serverData).map(formatServer));
-  }, [supabase]);
+  }, [supabase, userId]);
 
   // Mensagens e Reações do Supabase
   const refreshMessages = useCallback(async () => {
-    const currentUser = userRef.current;
-    if (!currentUser) return;
+    if (!userId) return;
+    const currentUser = { id: userId };
 
     const [messagesRes, reactionsRes] = await Promise.all([
       supabase
@@ -309,7 +333,7 @@ export function usePamplexData(): UsePamplexDataResult {
     profilesRef.current.forEach((profile) =>
       authorNames.set(profile.id, profileDisplayName(profile))
     );
-    if (!authorNames.has(currentUserProfileRef.current.username)) {
+    if (!authorNames.has(currentUser.id)) {
       authorNames.set(currentUser.id, currentUserProfileRef.current.name);
     }
 
@@ -353,21 +377,24 @@ export function usePamplexData(): UsePamplexDataResult {
         };
       })
     );
-  }, [supabase]);
+  }, [supabase, userId]);
 
   const toggleReaction = useCallback(
     async (messageId: string, emoji: string) => {
-      const currentUser = userRef.current;
-      if (!currentUser) return;
+      if (!userId) return;
+
+      // Lê o estado ANTES da atualização otimista
+      const currentMsg = messagesRef.current.find((m) => m.id === messageId);
+      const wasReacted =
+        currentMsg?.reactions.find((r) => r.emoji === emoji)?.reacted ?? false;
 
       setMessages((prev) =>
         prev.map((msg) => {
           if (msg.id !== messageId) return msg;
           const reactions = [...msg.reactions];
           const idx = reactions.findIndex((r) => r.emoji === emoji);
-          const isReacted = reactions[idx]?.reacted ?? false;
 
-          if (isReacted) {
+          if (wasReacted) {
             if (idx !== -1) {
               if (reactions[idx].count <= 1) {
                 reactions.splice(idx, 1);
@@ -379,44 +406,45 @@ export function usePamplexData(): UsePamplexDataResult {
                 };
               }
             }
+          } else if (idx !== -1) {
+            reactions[idx] = {
+              ...reactions[idx],
+              count: reactions[idx].count + 1,
+              reacted: true,
+            };
           } else {
-            if (idx !== -1) {
-              reactions[idx] = {
-                ...reactions[idx],
-                count: reactions[idx].count + 1,
-                reacted: true,
-              };
-            } else {
-              reactions.push({ emoji, count: 1, reacted: true });
-            }
+            reactions.push({ emoji, count: 1, reacted: true });
           }
           return { ...msg, reactions };
         })
       );
 
-      const currentMsg = messages.find((m) => m.id === messageId);
-      const existingReaction = currentMsg?.reactions.find((r) => r.emoji === emoji);
-      const isReacted = existingReaction?.reacted ?? false;
+      const { error } = wasReacted
+        ? await supabase
+            .from("message_reactions")
+            .delete()
+            .eq("message_id", messageId)
+            .eq("user_id", userId)
+            .eq("emoji", emoji)
+        : await supabase
+            .from("message_reactions")
+            .upsert(
+              { message_id: messageId, user_id: userId, emoji },
+              { onConflict: "message_id,user_id,emoji" }
+            );
 
-      if (isReacted) {
-        await supabase
-          .from("message_reactions")
-          .delete()
-          .eq("message_id", messageId)
-          .eq("user_id", currentUser.id)
-          .eq("emoji", emoji);
-      } else {
-        await supabase.from("message_reactions").upsert(
-          { message_id: messageId, user_id: currentUser.id, emoji },
-          { onConflict: "message_id,user_id,emoji" }
-        );
+      if (error) {
+        console.error("Erro ao atualizar reação:", error.message);
+        await refreshMessages(); // desfaz a atualização otimista
       }
     },
-    [user, messages, supabase]
+    [userId, supabase, refreshMessages]
   );
 
   const fetchServerMembers = useCallback(
     async (serverId: string) => {
+      requestedMembersServerRef.current = serverId;
+
       if (!serverId) {
         setServerMemberships(NO_SERVER_MEMBERS);
         return;
@@ -431,6 +459,8 @@ export function usePamplexData(): UsePamplexDataResult {
         console.error("Erro ao carregar membros do servidor:", error.message);
         return;
       }
+      // Ignora respostas de um servidor que já não é o ativo
+      if (requestedMembersServerRef.current !== serverId) return;
       setServerMemberships(asRows<ServerMemberRow>(data));
     },
     [supabase]
@@ -499,7 +529,7 @@ export function usePamplexData(): UsePamplexDataResult {
 
   // Realtime global e estável
   useEffect(() => {
-    if (!user) return;
+    if (!userId) return;
 
     const channel = supabase
       .channel("pamplex-global-realtime")
@@ -512,7 +542,7 @@ export function usePamplexData(): UsePamplexDataResult {
             typeof newRow.author_id === "string" ? newRow.author_id : "";
           let authorName = "Membro Pamplex";
 
-          if (authorId === user.id) {
+          if (authorId === userId) {
             authorName = currentUserProfileRef.current.name;
           } else {
             const { data: senderProfile } = await supabase
@@ -583,35 +613,100 @@ export function usePamplexData(): UsePamplexDataResult {
           refreshServers();
         }
       )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "server_members" },
+        (payload) => {
+          const row = (payload.new ?? payload.old ?? {}) as Record<string, unknown>;
+          refreshServers();
+          setMembersVersion((v) => v + 1);
+          // Entrei num servidor: carrega o histórico das mensagens dele
+          if (row.user_id === userId) refreshMessages();
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "profiles" },
+        () => {
+          refreshProfiles();
+        }
+      )
       .subscribe();
 
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [user, supabase, upsertMessage, refreshMessages, refreshProfiles, refreshServers]);
+  }, [userId, supabase, upsertMessage, refreshMessages, refreshProfiles, refreshServers]);
 
+  // Carga inicial: corre quando o utilizador fica autenticado (e não só na montagem)
   useEffect(() => {
-    refreshProfiles();
-  }, [refreshProfiles]);
+    if (!userId) return;
 
-  useEffect(() => {
-    refreshServers();
-  }, [refreshServers]);
+    const load = async () => {
+      // Convite pendente: o utilizador abriu /convite/<id> sem estar logado
+      try {
+        const pending = window.localStorage.getItem(PENDING_INVITE_KEY);
+        if (pending) {
+          window.localStorage.removeItem(PENDING_INVITE_KEY);
+          const result = await joinServerById(pending);
+          if (result.ok) setInvitedServerId(result.serverId);
+        }
+      } catch {
+        // Sem storage: ignora
+      }
 
+      await Promise.all([refreshProfiles(), refreshServers()]);
+      await refreshMessages();
+    };
+
+    load();
+  }, [userId, joinServerById, refreshProfiles, refreshServers, refreshMessages]);
+
+  // Presença real: quem está com o app aberto aparece online
   useEffect(() => {
-    refreshMessages();
-  }, [refreshMessages]);
+    if (!userId) return;
+
+    const presenceChannel = supabase.channel("online-users", {
+      config: { presence: { key: userId } },
+    });
+
+    presenceChannel
+      .on("presence", { event: "sync" }, () => {
+        setOnlineIds(new Set(Object.keys(presenceChannel.presenceState())));
+      })
+      .subscribe(async (status) => {
+        if (status === "SUBSCRIBED") {
+          await presenceChannel.track({
+            user_id: userId,
+            online_at: new Date().toISOString(),
+          });
+        }
+      });
+
+    const handleBeforeUnload = () => {
+      presenceChannel.untrack();
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+
+    return () => {
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+      presenceChannel.untrack();
+      supabase.removeChannel(presenceChannel);
+    };
+  }, [userId, supabase]);
 
   return {
     supabase,
     user,
     authLoading,
-    profiles,
-    friendships,
-    servers,
-    serverMemberships: user ? serverMemberships : NO_SERVER_MEMBERS,
-    messages,
-    onlineIds,
+    profiles: userId ? profiles : NO_PROFILES,
+    friendships: userId ? friendships : NO_FRIENDSHIPS,
+    servers: userId ? servers : NO_SERVERS,
+    serverMemberships: userId ? serverMemberships : NO_SERVER_MEMBERS,
+    messages: userId ? messages : NO_MESSAGES,
+    onlineIds: userId ? onlineIds : NO_ONLINE,
+    invitedServerId,
+    membersVersion,
     joinServerById,
     fetchServerMembers,
     refreshServers,
