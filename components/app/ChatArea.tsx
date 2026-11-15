@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   Check,
   Hash,
@@ -59,7 +59,7 @@ function renderTextWithMentions(text: string) {
   });
 }
 
-function renderMessageContent(content: string) {
+function renderMessageContent(content: string, onImageLoad?: () => void) {
   const imageMatches = content.match(IMAGE_URL_REGEX) ?? [];
   const textWithoutImages = content.replace(IMAGE_URL_REGEX, "").trim();
 
@@ -82,6 +82,7 @@ function renderMessageContent(content: string) {
           <img
             src={url}
             alt="Anexo enviado no chat"
+            onLoad={onImageLoad}
             className="max-h-72 w-auto object-contain"
             loading="lazy"
           />
@@ -114,12 +115,40 @@ export function ChatArea({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState("");
 
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const initialChannelScrollDoneRef = useRef<string | null>(null);
 
-  useEffect(() => {
+  const scrollToBottomInstant = () => {
+    const el = scrollContainerRef.current;
+    if (el) {
+      el.scrollTop = el.scrollHeight;
+    }
+  };
+
+  // Posiciona instantaneamente no fundo ao abrir o canal ou após F5 (sem rolar desde o topo)
+  useLayoutEffect(() => {
+    if (messages.length === 0) return;
+
+    if (initialChannelScrollDoneRef.current !== channel.id) {
+      scrollToBottomInstant();
+      initialChannelScrollDoneRef.current = channel.id;
+      return;
+    }
+
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages.length, channel.id]);
+
+  // Se uma imagem carregar e empurrar o layout, mantém colado no fundo se já estava lá embaixo
+  const handleImageLoad = () => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    if (distanceFromBottom < 350) {
+      scrollToBottomInstant();
+    }
+  };
 
   useEffect(() => {
     if (!selectedImage) {
@@ -225,7 +254,10 @@ export function ChatArea({
       </header>
 
       {/* Fluxo de Mensagens */}
-      <div className="flex-1 overflow-y-auto px-5 py-4 pb-6 flex flex-col gap-1">
+      <div
+        ref={scrollContainerRef}
+        className="flex-1 overflow-y-auto px-5 py-4 pb-6 flex flex-col gap-1"
+      >
         <div className="mb-4 border-b border-pamplex-border pb-4">
           <div className="flex h-12 w-12 items-center justify-center rounded-[14px] bg-pamplex-surface border border-pamplex-border text-pamplex-turquesa mb-3">
             <Hash className="h-6 w-6" />
@@ -342,7 +374,7 @@ export function ChatArea({
                     </button>
                   </div>
                 ) : (
-                  renderMessageContent(msg.content)
+                  renderMessageContent(msg.content, handleImageLoad)
                 )}
 
                 {msg.reactions.length > 0 && (
