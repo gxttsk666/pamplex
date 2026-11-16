@@ -36,6 +36,8 @@ export interface PamplexMember {
   isSpeaking?: boolean;
   relation?: FriendRelation;
   customStatus?: string;
+  avatarUrl?: string;
+  bio?: string;
 }
 
 export interface MessageReaction {

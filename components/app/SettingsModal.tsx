@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { X, Loader2, Check, Mic, Volume2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { AvatarImg } from "./AvatarImg";
 
 type UserStatus = "online" | "idle" | "dnd";
 
@@ -16,9 +17,12 @@ interface SettingsModalProps {
   currentName: string;
   currentUsername: string;
   currentStatus: UserStatus;
+  currentAvatarUrl?: string | null;
+  currentBio?: string | null;
   userId: string;
   onClose: () => void;
   onSaved: (name: string, status: UserStatus) => void;
+  onAvatarChange?: (url: string) => void;
 }
 
 const STATUS_OPTIONS: { value: UserStatus; label: string; color: string }[] = [
@@ -32,15 +36,22 @@ export function SettingsModal({
   currentName,
   currentUsername,
   currentStatus,
+  currentAvatarUrl,
+  currentBio,
   userId,
   onClose,
   onSaved,
+  onAvatarChange,
 }: SettingsModalProps) {
   const [displayName, setDisplayName] = useState(currentName);
   const [status, setStatus] = useState<UserStatus>(currentStatus);
+  const [bio, setBio] = useState(currentBio ?? "");
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [avatarUploading, setAvatarUploading] = useState(false);
+  const [avatarPreview, setAvatarPreview] = useState<string | null>(currentAvatarUrl ?? null);
+  const avatarInputRef = useRef<HTMLInputElement>(null);
 
   // Dispositivos de áudio
   const [micDevices, setMicDevices] = useState<MediaDeviceInfo[]>([]);
@@ -55,16 +66,17 @@ export function SettingsModal({
     if (open) {
       setDisplayName(currentName);
       setStatus(currentStatus);
+      setBio(currentBio ?? "");
+      setAvatarPreview(currentAvatarUrl ?? null);
       setSaved(false);
       setError(null);
       loadDevices();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, currentName, currentStatus]);
+  }, [open, currentName, currentStatus, currentBio, currentAvatarUrl]);
 
   const loadDevices = async () => {
     try {
-      // Pede permissão de microfone para obter os labels reais
       await navigator.mediaDevices.getUserMedia({ audio: true }).catch(() => {});
       const devices = await navigator.mediaDevices.enumerateDevices();
       const mics = devices
@@ -81,6 +93,28 @@ export function SettingsModal({
     }
   };
 
+  const handleAvatarUpload = async (file: File) => {
+    if (!userId) return;
+    setAvatarUploading(true);
+    try {
+      const preview = URL.createObjectURL(file);
+      setAvatarPreview(preview);
+      const ext = file.name.split(".").pop() ?? "jpg";
+      const path = `avatars/${userId}.${ext}`;
+      const { error: uploadErr } = await supabase.storage
+        .from("chat-attachments")
+        .upload(path, file, { upsert: true, contentType: file.type });
+      if (!uploadErr) {
+        const { data } = supabase.storage.from("chat-attachments").getPublicUrl(path);
+        const url = data.publicUrl;
+        await (supabase.from("profiles").update({ avatar_url: url } as Record<string, unknown>).eq("id", userId));
+        onAvatarChange?.(url);
+      }
+    } catch { /* Ignora */ } finally {
+      setAvatarUploading(false);
+    }
+  };
+
   const handleSave = async () => {
     if (!displayName.trim()) return;
     setSaving(true);
@@ -88,7 +122,7 @@ export function SettingsModal({
     try {
       const { error: err } = await supabase
         .from("profiles")
-        .update({ display_name: displayName.trim(), status })
+        .update({ display_name: displayName.trim(), status, bio: bio.trim() || null } as Record<string, unknown>)
         .eq("id", userId);
       if (err) throw new Error(err.message);
 
@@ -132,6 +166,38 @@ export function SettingsModal({
           <div className="flex flex-col gap-4">
             <h3 className="text-[11px] font-semibold uppercase tracking-wider text-pamplex-text-muted">Perfil</h3>
 
+            {/* Avatar */}
+            <div className="flex items-center gap-4">
+              <div
+                className="relative cursor-pointer"
+                onClick={() => avatarInputRef.current?.click()}
+                title="Alterar foto de perfil"
+              >
+                <AvatarImg
+                  avatarUrl={avatarPreview}
+                  initials={currentName.slice(0, 2).toUpperCase()}
+                  accentColor="bg-pamplex-turquesa text-pamplex-dark"
+                  size="lg"
+                />
+                <div className="absolute inset-0 flex items-center justify-center rounded-full bg-black/40 opacity-0 hover:opacity-100 transition">
+                  <span className="text-[9px] font-bold text-white">ALTERAR</span>
+                </div>
+                {avatarUploading && (
+                  <div className="absolute inset-0 flex items-center justify-center rounded-full bg-black/60">
+                    <Loader2 className="h-4 w-4 animate-spin text-white" />
+                  </div>
+                )}
+              </div>
+              <input
+                ref={avatarInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => { const f = e.target.files?.[0]; if (f) handleAvatarUpload(f); }}
+              />
+              <span className="text-xs text-pamplex-text-muted">Clica na imagem para alterar</span>
+            </div>
+
             <div className="flex flex-col gap-1.5">
               <label className="text-xs font-medium text-pamplex-text-secondary">Nome de Exibição</label>
               <input
@@ -142,6 +208,19 @@ export function SettingsModal({
                 className="rounded-[10px] border border-pamplex-border bg-pamplex-dark px-3 py-2 text-sm text-pamplex-text-primary placeholder:text-pamplex-text-muted focus:border-pamplex-turquesa focus:outline-none transition"
               />
               <span className="text-[11px] text-pamplex-text-muted">@{currentUsername}</span>
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-medium text-pamplex-text-secondary">Bio / Status personalizado</label>
+              <textarea
+                value={bio}
+                onChange={(e) => setBio(e.target.value)}
+                maxLength={120}
+                rows={2}
+                placeholder="A jogar... A trabalhar no Pamplex..."
+                className="rounded-[10px] border border-pamplex-border bg-pamplex-dark px-3 py-2 text-sm text-pamplex-text-primary placeholder:text-pamplex-text-muted focus:border-pamplex-turquesa focus:outline-none transition resize-none"
+              />
+              <span className="text-[11px] text-pamplex-text-muted text-right">{bio.length}/120</span>
             </div>
 
             <div className="flex flex-col gap-2">

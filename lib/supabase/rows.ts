@@ -11,6 +11,8 @@ export interface ProfileRow {
   display_name: string | null;
   username: string | null;
   status: string | null;
+  avatar_url?: string | null;
+  bio?: string | null;
 }
 
 export interface FriendshipRow {

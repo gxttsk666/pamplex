@@ -9,6 +9,7 @@ interface ServerRailProps {
   activeServerId: string;
   isHomeActive: boolean;
   homeBadgeCount: number;
+  unreadServerIds?: Set<string>;
   onSelectHome: () => void;
   onSelectServer: (serverId: string) => void;
   onOpenCreateServer: () => void;
@@ -19,6 +20,7 @@ export function ServerRail({
   activeServerId,
   isHomeActive,
   homeBadgeCount,
+  unreadServerIds = new Set(),
   onSelectHome,
   onSelectServer,
   onOpenCreateServer,
@@ -48,6 +50,7 @@ export function ServerRail({
 
   const renderServerButton = (server: PamplexServer) => {
     const isActive = !isHomeActive && server.id === activeServerId;
+    const hasUnread = !isActive && unreadServerIds.has(server.id);
 
     return (
       <div key={server.id} className="relative flex w-full items-center justify-center">
@@ -55,7 +58,7 @@ export function ServerRail({
         <span
           className={[
             "absolute left-0 w-1 rounded-r-full bg-pamplex-turquesa transition-all duration-150",
-            isActive ? "h-8 opacity-100" : "h-0 opacity-0",
+            isActive ? "h-8 opacity-100" : hasUnread ? "h-2 opacity-80" : "h-0 opacity-0",
           ].join(" ")}
         />
 
@@ -75,13 +78,14 @@ export function ServerRail({
         >
           <span>{server.initials}</span>
 
+          {/* Badge de não-lidas */}
+          {hasUnread && (
+            <span className="absolute -bottom-1 -right-1 h-3.5 w-3.5 rounded-full border-2 border-pamplex-dark bg-white" />
+          )}
+
           {/* Radar Vivo: ponto pulsante quando há alguém falando */}
           {server.hasActiveVoice && (
-            <span
-              className={[
-                "absolute -top-1 -right-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-pamplex-dark",
-              ].join(" ")}
-            >
+            <span className="absolute -top-1 -right-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-pamplex-dark">
               <span
                 className={[
                   "h-2.5 w-2.5 rounded-full bg-pamplex-esmeralda",

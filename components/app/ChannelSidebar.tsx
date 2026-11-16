@@ -21,6 +21,7 @@ interface ChannelSidebarProps {
   connectedVoiceChannelId: string | null;
   members: PamplexMember[];
   isOwner?: boolean;
+  unreadChannelIds?: Set<string>;
   onSelectTextChannel: (channelId: string) => void;
   onJoinVoiceChannel: (channelId: string) => void;
   onOpenInviteModal: () => void;
@@ -35,6 +36,7 @@ export function ChannelSidebar({
   connectedVoiceChannelId,
   members,
   isOwner = false,
+  unreadChannelIds = new Set(),
   onSelectTextChannel,
   onJoinVoiceChannel,
   onOpenInviteModal,
@@ -69,6 +71,7 @@ export function ChannelSidebar({
     const isSelected = isText
       ? channel.id === activeChannelId
       : channel.id === connectedVoiceChannelId;
+    const hasUnread = isText && !isSelected && unreadChannelIds.has(channel.id);
 
     const voiceMembers = !isText
       ? members.filter((m) => m.inVoiceChannelId === channel.id)
@@ -85,7 +88,9 @@ export function ChannelSidebar({
               ? isText
                 ? "bg-pamplex-elevated text-pamplex-text-primary font-medium"
                 : "bg-pamplex-floresta-bg text-pamplex-menta font-medium border border-pamplex-esmeralda/30"
-              : "text-pamplex-text-secondary hover:bg-pamplex-surface hover:text-pamplex-text-primary",
+              : hasUnread
+                ? "text-pamplex-text-primary font-semibold hover:bg-pamplex-surface"
+                : "text-pamplex-text-secondary hover:bg-pamplex-surface hover:text-pamplex-text-primary",
           ].join(" ")}
         >
           {/* Ícone + nome (ou input de edição) */}
@@ -118,7 +123,7 @@ export function ChannelSidebar({
           </button>
 
           {/* Ponto de não-lido */}
-          {channel.unread && !isSelected && !isOwner && (
+          {(channel.unread || hasUnread) && !isSelected && !isOwner && (
             <span className="h-2 w-2 rounded-full bg-pamplex-turquesa shrink-0" />
           )}
 

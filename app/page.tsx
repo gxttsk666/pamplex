@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { LogOut, Plus, UserPlus, Phone, MonitorUp, Video, UserMinus, ShieldOff } from "lucide-react";
+import { LogOut, Plus, UserPlus, Phone, MonitorUp, Video, UserMinus, ShieldOff, Menu } from "lucide-react";
 import { AuthModal } from "@/components/auth/AuthModal";
 import { ServerRail } from "@/components/app/ServerRail";
 import { ChannelSidebar } from "@/components/app/ChannelSidebar";
@@ -45,6 +45,42 @@ type ServerModalTab = "create" | "join";
 const AUTHOR_COLOR = "bg-pamplex-turquesa text-pamplex-dark";
 const IMAGE_URL_REGEX = /https?:\/\/[^\s]+\.(?:png|jpe?g|gif|webp|avif)(?:\?[^\s]*)?/i;
 
+// ─── Leitura por canal de servidor ───────────────────────────────────────────
+function getServerChannelReadKey(userId: string) {
+  return `pamplex_channel_last_read_${userId}`;
+}
+
+function readChannelLastReadMap(userId: string): Record<string, number> {
+  try {
+    const raw = window.localStorage.getItem(getServerChannelReadKey(userId));
+    return raw ? (JSON.parse(raw) as Record<string, number>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeChannelLastReadMap(userId: string, map: Record<string, number>) {
+  try {
+    window.localStorage.setItem(getServerChannelReadKey(userId), JSON.stringify(map));
+  } catch { /* Sem storage */ }
+}
+
+// ─── Notificação nativa ───────────────────────────────────────────────────────
+function requestNotificationPermission() {
+  if (typeof Notification !== "undefined" && Notification.permission === "default") {
+    Notification.requestPermission().catch(() => {});
+  }
+}
+
+function fireNativeNotification(title: string, body: string) {
+  if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
+  if (document.visibilityState === "visible") return;
+  try {
+    new Notification(title, { body, icon: "/icons/icon.svg", badge: "/icons/icon.svg" });
+  } catch { /* Ignora */ }
+}
+
+// ─── Leitura por DM ──────────────────────────────────────────────────────────
 function getLastReadStorageKey(userId: string) {
   return `pamplex_dm_last_read_${userId}`;
 }
@@ -130,6 +166,9 @@ export default function PamplexApp() {
   const [channelModalOpen, setChannelModalOpen] = useState(false);
   const [inviteModalOpen, setInviteModalOpen] = useState(false);
   const [settingsModalOpen, setSettingsModalOpen] = useState(false);
+
+  // Gaveta mobile — controla abertura do ServerRail + Sidebar em ecrãs pequenos
+  const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
 
   // Chamada recebida (DM)
   const [incomingCall, setIncomingCall] = useState<IncomingCall | null>(null);
@@ -217,6 +256,9 @@ export default function PamplexApp() {
   const [lastReadByUserId, setLastReadByUserId] = useState<Record<string, number>>({});
   const [lastReadLoaded, setLastReadLoaded] = useState(false);
 
+  // Rastreamento de leitura por canal de servidor
+  const [channelLastReadMap, setChannelLastReadMap] = useState<Record<string, number>>({});
+
   // Indicador "está digitando..."
   const [typingUsers, setTypingUsers] = useState<string[]>([]);
   const typingChannelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
@@ -257,6 +299,26 @@ export default function PamplexApp() {
     if (!navRestored) return;
     writeVoiceState({ connectedVoiceChannelId, activeCallRoom, isMuted, isDeafened });
   }, [navRestored, connectedVoiceChannelId, activeCallRoom, isMuted, isDeafened]);
+
+  // Pede permissão de notificação quando o utilizador fizer login
+  useEffect(() => {
+    if (user) requestNotificationPermission();
+  }, [user]);
+
+  // Carrega e persiste o mapa de última leitura por canal de servidor
+  useEffect(() => {
+    if (!user) { setChannelLastReadMap({}); return; }
+    setChannelLastReadMap(readChannelLastReadMap(user.id));
+  }, [user]);
+
+  const markChannelAsRead = useCallback((channelId: string) => {
+    if (!user) return;
+    setChannelLastReadMap((prev) => {
+      const next = { ...prev, [channelId]: Date.now() };
+      writeChannelLastReadMap(user.id, next);
+      return next;
+    });
+  }, [user]);
 
   // Canal de chamadas recebidas via Supabase Realtime
   useEffect(() => {
@@ -678,6 +740,36 @@ export default function PamplexApp() {
     return null;
   }, [servers, connectedVoiceChannelId]);
 
+  // Canais de servidor com mensagens não lidas
+  const unreadChannelIds = useMemo<Set<string>>(() => {
+    if (!user) return new Set();
+    const unread = new Set<string>();
+    for (const msg of messages) {
+      if (msg.authorId === user.id) continue;
+      if (msg.channelId.startsWith("dm-")) continue;
+      const lastRead = channelLastReadMap[msg.channelId] ?? 0;
+      if (msg.timestamp > lastRead) unread.add(msg.channelId);
+    }
+    return unread;
+  }, [messages, user, channelLastReadMap]);
+
+  // Servidores com pelo menos um canal não lido
+  const unreadServerIds = useMemo<Set<string>>(() => {
+    const ids = new Set<string>();
+    for (const server of servers) {
+      for (const ch of server.channels) {
+        if (unreadChannelIds.has(ch.id)) { ids.add(server.id); break; }
+      }
+    }
+    return ids;
+  }, [servers, unreadChannelIds]);
+
+  // Marca canal como lido ao entrar nele
+  useEffect(() => {
+    if (!activeChannelId || isHomeActive) return;
+    markChannelAsRead(activeChannelId);
+  }, [activeChannelId, isHomeActive, markChannelAsRead]);
+
   useEffect(() => {
     setTypingUsers([]);
     if (!user || !currentChatChannel) return;
@@ -744,13 +836,26 @@ export default function PamplexApp() {
         const isCurrentChannelOpen =
           document.visibilityState === "visible" &&
           currentChatChannel?.id === message.channelId;
+
         if (!isCurrentChannelOpen) {
           playNotificationTone();
+
+          // Notificação nativa: DMs e menções
+          const isDm = message.channelId.startsWith("dm-");
+          const mentionsMe = currentUserProfile.username &&
+            message.content.toLowerCase().includes(`@${currentUserProfile.username.toLowerCase()}`);
+
+          if (isDm || mentionsMe) {
+            const title = isDm
+              ? `Nova mensagem de ${message.authorName}`
+              : `${message.authorName} mencionou você`;
+            fireNativeNotification(title, message.content.slice(0, 100));
+          }
         }
       }
     }
     initialMessagesLoadedRef.current = true;
-  }, [messages, user, currentChatChannel?.id]);
+  }, [messages, user, currentChatChannel?.id, currentUserProfile.username]);
 
   const openDm = useCallback(
     (userId: string) => {
@@ -1210,47 +1315,65 @@ export default function PamplexApp() {
     <div className="relative flex h-screen w-screen overflow-hidden bg-pamplex-bg text-pamplex-text-primary">
       {user ? (
         <>
-          <ServerRail
-            servers={servers}
-            activeServerId={activeServer?.id ?? ""}
-            isHomeActive={isHomeActive}
-            homeBadgeCount={pendingRequestsCount + totalUnreadDms}
-            onSelectHome={() => setIsHomeActive(true)}
-            onSelectServer={handleSelectServer}
-            onOpenCreateServer={() => {
-              setServerModalTab("create");
-              setServerModalOpen(true);
-            }}
-          />
-
-          {isHomeActive ? (
-            <DirectSidebar
-              friends={relatedMembers.filter((m) => !blockedIds.has(m.id))}
-              activeDmUserId={activeDmUserId}
-              pendingCount={pendingRequestsCount}
-              unreadByUserId={unreadByUserId}
-              lastDmByUserId={lastDmByUserId}
-              onSelectFriendsTab={() => setActiveDmUserId(null)}
-              onSelectDmUser={openDm}
+          {/* ── Overlay de fecho do drawer mobile ── */}
+          {mobileDrawerOpen && (
+            <div
+              className="fixed inset-0 z-40 bg-black/50 md:hidden"
+              onClick={() => setMobileDrawerOpen(false)}
             />
-          ) : (
-            activeServer &&
-            activeChannel && (
-              <ChannelSidebar
-                server={activeServer}
-                activeChannelId={activeChannel.id}
-                connectedVoiceChannelId={connectedVoiceChannelId}
-                members={serverMemberList}
-                isOwner={serverMemberships.some((m) => m.user_id === user?.id && m.role === "owner")}
-                onSelectTextChannel={setActiveChannelId}
-                onJoinVoiceChannel={handleJoinVoiceChannel}
-                onOpenInviteModal={() => setInviteModalOpen(true)}
-                onRenameChannel={handleRenameChannel}
-                onDeleteChannel={handleDeleteChannel}
-                onRenameServer={handleRenameServer}
-              />
-            )
           )}
+
+          {/* ── Drawer: ServerRail + Sidebar — oculto em mobile por padrão ── */}
+          <div className={[
+            "flex h-full shrink-0 transition-transform duration-300",
+            "fixed md:relative z-50 md:z-auto",
+            mobileDrawerOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0",
+          ].join(" ")}>
+            <ServerRail
+              servers={servers}
+              activeServerId={activeServer?.id ?? ""}
+              isHomeActive={isHomeActive}
+              homeBadgeCount={pendingRequestsCount + totalUnreadDms}
+              unreadServerIds={unreadServerIds}
+              onSelectHome={() => { setIsHomeActive(true); setMobileDrawerOpen(false); }}
+              onSelectServer={(id) => { handleSelectServer(id); setMobileDrawerOpen(false); }}
+              onOpenCreateServer={() => {
+                setServerModalTab("create");
+                setServerModalOpen(true);
+                setMobileDrawerOpen(false);
+              }}
+            />
+
+            {isHomeActive ? (
+              <DirectSidebar
+                friends={relatedMembers.filter((m) => !blockedIds.has(m.id))}
+                activeDmUserId={activeDmUserId}
+                pendingCount={pendingRequestsCount}
+                unreadByUserId={unreadByUserId}
+                lastDmByUserId={lastDmByUserId}
+                onSelectFriendsTab={() => { setActiveDmUserId(null); setMobileDrawerOpen(false); }}
+                onSelectDmUser={(id) => { openDm(id); setMobileDrawerOpen(false); }}
+              />
+            ) : (
+              activeServer &&
+              activeChannel && (
+                <ChannelSidebar
+                  server={activeServer}
+                  activeChannelId={activeChannel.id}
+                  connectedVoiceChannelId={connectedVoiceChannelId}
+                  members={serverMemberList}
+                  isOwner={serverMemberships.some((m) => m.user_id === user?.id && m.role === "owner")}
+                  unreadChannelIds={unreadChannelIds}
+                  onSelectTextChannel={(id) => { setActiveChannelId(id); setMobileDrawerOpen(false); }}
+                  onJoinVoiceChannel={(id) => { handleJoinVoiceChannel(id); setMobileDrawerOpen(false); }}
+                  onOpenInviteModal={() => { setInviteModalOpen(true); setMobileDrawerOpen(false); }}
+                  onRenameChannel={handleRenameChannel}
+                  onDeleteChannel={handleDeleteChannel}
+                  onRenameServer={handleRenameServer}
+                />
+              )
+            )}
+          </div>
 
           {isHomeActive && !currentChatChannel ? (
             <FriendsView
@@ -1266,6 +1389,16 @@ export default function PamplexApp() {
           ) : (
             currentChatChannel && (
               <div className="relative flex flex-1 flex-col h-full overflow-hidden">
+                {/* Botão hamburguer mobile — abre o drawer de navegação */}
+                <button
+                  type="button"
+                  onClick={() => setMobileDrawerOpen(true)}
+                  className="md:hidden absolute left-3 top-3 z-30 flex h-8 w-8 items-center justify-center rounded-[8px] bg-pamplex-elevated text-pamplex-text-secondary hover:text-pamplex-text-primary transition cursor-pointer"
+                  title="Abrir navegação"
+                >
+                  <Menu className="h-4 w-4" />
+                </button>
+
                 {/* Cabeçalho de ações da DM — aparece acima do ChatArea */}
                 {isHomeActive && activeDmFriend && (
                   <div className="absolute right-4 top-3 z-30 flex items-center gap-2">

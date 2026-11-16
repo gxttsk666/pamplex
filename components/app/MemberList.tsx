@@ -4,6 +4,7 @@ import React from "react";
 import { MicOff, Volume2, UserX } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 import { PamplexMember, UserStatus } from "./types";
+import { AvatarImg } from "./AvatarImg";
 
 interface MemberListProps {
   members: PamplexMember[];
@@ -36,15 +37,13 @@ export function MemberList({ members, isOwner = false, currentUserId, onKickMemb
     >
       <div className="flex items-center gap-2.5 min-w-0">
         <div className="relative shrink-0">
-          <div
-            className={[
-              "flex h-8 w-8 items-center justify-center rounded-full text-xs font-bold",
-              member.accentColor,
-              member.isSpeaking ? "ring-2 ring-pamplex-esmeralda" : "",
-            ].join(" ")}
-          >
-            {member.initials}
-          </div>
+          <AvatarImg
+            avatarUrl={member.avatarUrl}
+            initials={member.initials}
+            accentColor={member.accentColor}
+            size="sm"
+            speaking={member.isSpeaking}
+          />
           <span
             className={[
               "absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full ring-2 ring-pamplex-sidebar",
