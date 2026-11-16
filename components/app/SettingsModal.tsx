@@ -23,6 +23,7 @@ interface SettingsModalProps {
   onClose: () => void;
   onSaved: (name: string, status: UserStatus) => void;
   onAvatarChange?: (url: string) => void;
+  onRefreshProfiles?: () => Promise<void>;
 }
 
 const STATUS_OPTIONS: { value: UserStatus; label: string; color: string }[] = [
@@ -42,6 +43,7 @@ export function SettingsModal({
   onClose,
   onSaved,
   onAvatarChange,
+  onRefreshProfiles,
 }: SettingsModalProps) {
   const [displayName, setDisplayName] = useState(currentName);
   const [status, setStatus] = useState<UserStatus>(currentStatus);
@@ -135,6 +137,7 @@ export function SettingsModal({
 
       setSaved(true);
       onSaved(displayName.trim(), status);
+      await onRefreshProfiles?.();
       setTimeout(() => setSaved(false), 1500);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Erro ao guardar.");

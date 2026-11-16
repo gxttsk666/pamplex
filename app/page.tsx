@@ -1625,11 +1625,14 @@ export default function PamplexApp() {
               currentStatus={
                 (profiles.find((p) => p.id === user.id)?.status as "online" | "idle" | "dnd") ?? "online"
               }
+              currentAvatarUrl={profiles.find((p) => p.id === user.id)?.avatar_url}
+              currentBio={profiles.find((p) => p.id === user.id)?.bio}
               userId={user.id}
               onClose={() => setSettingsModalOpen(false)}
               onSaved={(_name, _status) => {
                 refreshProfiles();
               }}
+              onRefreshProfiles={refreshProfiles}
             />
           )}
         </>

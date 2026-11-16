@@ -10,7 +10,7 @@ interface ServerRailProps {
   isHomeActive: boolean;
   homeBadgeCount: number;
   unreadServerIds?: Set<string>;
-  globalVoiceByUserId?: Record<string, { channelName: string; channelId: string; serverId: string }>;
+  serversWithActiveVoice?: Set<string>;
   onSelectHome: () => void;
   onSelectServer: (serverId: string) => void;
   onOpenCreateServer: () => void;
@@ -22,7 +22,7 @@ export function ServerRail({
   isHomeActive,
   homeBadgeCount,
   unreadServerIds = new Set(),
-  globalVoiceByUserId = {},
+  serversWithActiveVoice = new Set(),
   onSelectHome,
   onSelectServer,
   onOpenCreateServer,
@@ -30,15 +30,6 @@ export function ServerRail({
   const [openFolders, setOpenFolders] = useState<Record<string, boolean>>({
     Projetos: true,
   });
-
-  // Calcula servidores com participantes em voz
-  const serversInCall = useMemo(() => {
-    const result = new Set<string>();
-    for (const call of Object.values(globalVoiceByUserId)) {
-      result.add(call.serverId);
-    }
-    return result;
-  }, [globalVoiceByUserId]);
 
   const { rootServers, folderMap } = useMemo(() => {
     const roots: PamplexServer[] = [];
@@ -62,7 +53,7 @@ export function ServerRail({
   const renderServerButton = (server: PamplexServer) => {
     const isActive = !isHomeActive && server.id === activeServerId;
     const hasUnread = !isActive && unreadServerIds.has(server.id);
-    const hasVoiceCall = serversInCall.has(server.id);
+    const hasVoiceCall = serversWithActiveVoice.has(server.id);
 
     return (
       <div key={server.id} className="relative flex w-full items-center justify-center">
