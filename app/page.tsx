@@ -175,7 +175,7 @@ export default function PamplexApp() {
           }
         });
 
-        setGlobalVoiceByUserId(next);
+        setGlobalVoiceByUserId((prev) => ({ ...prev, ...next }));
       })
       .subscribe(async (status) => {
         if (status === "SUBSCRIBED") {
@@ -356,6 +356,57 @@ export default function PamplexApp() {
     if (servers.length === 0) return null;
     return servers.find((server) => server.id === activeServerId) ?? servers[0];
   }, [servers, activeServerId]);
+
+  // Consulta diretamente no LiveKit quem está nos canais de voz do servidor ativo
+  useEffect(() => {
+    if (!user || !activeServer) return;
+    const voiceChannelIds = activeServer.channels
+      .filter((c) => c.type === "voice")
+      .map((c) => c.id);
+
+    if (voiceChannelIds.length === 0) return;
+
+    let cancelled = false;
+
+    const pollVoiceRooms = async () => {
+      try {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+        if (!session?.access_token) return;
+
+        const res = await fetch(
+          `/api/livekit?action=rooms&rooms=${encodeURIComponent(voiceChannelIds.join(","))}`,
+          { headers: { Authorization: `Bearer ${session.access_token}` } }
+        );
+        if (!res.ok || cancelled) return;
+
+        const data = (await res.json()) as {
+          byRoom?: Record<string, { id: string; name: string; muted: boolean }[]>;
+        };
+        if (!data.byRoom || cancelled) return;
+
+        const next: Record<string, { channelId: string; isMuted: boolean }> = {};
+        Object.entries(data.byRoom).forEach(([channelId, list]) => {
+          list.forEach((p) => {
+            next[p.id] = { channelId, isMuted: p.muted };
+          });
+        });
+
+        setGlobalVoiceByUserId(next);
+      } catch {
+        // Ignora falhas temporárias de rede
+      }
+    };
+
+    pollVoiceRooms();
+    const interval = setInterval(pollVoiceRooms, 4000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [user, activeServer, supabase]);
 
   const activeChannel = useMemo<PamplexChannel | null>(() => {
     if (!activeServer || activeServer.channels.length === 0) return null;
