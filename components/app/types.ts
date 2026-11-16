@@ -64,6 +64,7 @@ export interface PamplexMessage {
   timestamp: number;
   reactions: MessageReaction[];
   replyTo?: MessageReplyInfo;
+  isPinned?: boolean;
 }
 
 export const INITIAL_SERVERS: PamplexServer[] = [

@@ -1,10 +1,11 @@
 "use client";
 
-import React from "react";
+import { useState } from "react";
 import { MicOff, Volume2, UserX } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 import { PamplexMember, UserStatus } from "./types";
 import { AvatarImg } from "./AvatarImg";
+import { ProfileCard } from "./ProfileCard";
 
 interface MemberListProps {
   members: PamplexMember[];
@@ -21,6 +22,8 @@ const statusDotColors: Record<UserStatus, string> = {
 };
 
 export function MemberList({ members, isOwner = false, currentUserId, onKickMember }: MemberListProps) {
+  const [profileTarget, setProfileTarget] = useState<PamplexMember | null>(null);
+
   const inCallMembers = members.filter((m) => Boolean(m.inVoiceChannelId));
   const onlineMembers = members.filter(
     (m) => !m.inVoiceChannelId && m.status !== "offline"
@@ -34,6 +37,7 @@ export function MemberList({ members, isOwner = false, currentUserId, onKickMemb
         "group flex items-center justify-between rounded-[8px] px-2 py-1.5 transition-colors hover:bg-pamplex-surface cursor-pointer",
         dimmed ? "opacity-50" : "",
       ].join(" ")}
+      onClick={() => setProfileTarget(member)}
     >
       <div className="flex items-center gap-2.5 min-w-0">
         <div className="relative shrink-0">
@@ -87,44 +91,60 @@ export function MemberList({ members, isOwner = false, currentUserId, onKickMemb
   );
 
   return (
-    <aside
-      aria-label="Lista de membros"
-      className="hidden lg:flex h-full w-[240px] shrink-0 flex-col bg-pamplex-sidebar border-l border-pamplex-border px-3 py-4 gap-5 overflow-y-auto pb-24 select-none"
-    >
-      {/* Prioridade: Em Call Agora */}
-      {inCallMembers.length > 0 && (
-        <div className="flex flex-col gap-1.5 rounded-[12px] border border-pamplex-esmeralda/25 bg-pamplex-floresta-bg/50 p-2">
-          <div className="flex items-center justify-between px-1.5">
-            <span className="text-[11px] font-semibold uppercase tracking-wider text-pamplex-menta">
-              Em Call Agora
+    <>
+      <aside
+        aria-label="Lista de membros"
+        className="hidden lg:flex h-full w-[240px] shrink-0 flex-col bg-pamplex-sidebar border-l border-pamplex-border px-3 py-4 gap-5 overflow-y-auto pb-24 select-none"
+      >
+        {/* Prioridade: Em Call Agora */}
+        {inCallMembers.length > 0 && (
+          <div className="flex flex-col gap-1.5 rounded-[12px] border border-pamplex-esmeralda/25 bg-pamplex-floresta-bg/50 p-2">
+            <div className="flex items-center justify-between px-1.5">
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-pamplex-menta">
+                Em Call Agora
+              </span>
+              <Badge variant="esmeralda">{inCallMembers.length}</Badge>
+            </div>
+            <div className="flex flex-col gap-0.5">
+              {inCallMembers.map((m) => renderMemberRow(m))}
+            </div>
+          </div>
+        )}
+
+        {/* Disponíveis */}
+        {onlineMembers.length > 0 && (
+          <div className="flex flex-col gap-1">
+            <span className="px-2 text-[11px] font-semibold uppercase tracking-wider text-pamplex-text-muted">
+              Disponíveis — {onlineMembers.length}
             </span>
-            <Badge variant="esmeralda">{inCallMembers.length}</Badge>
+            {onlineMembers.map((m) => renderMemberRow(m))}
           </div>
-          <div className="flex flex-col gap-0.5">
-            {inCallMembers.map((m) => renderMemberRow(m))}
+        )}
+
+        {/* Offline */}
+        {offlineMembers.length > 0 && (
+          <div className="flex flex-col gap-1">
+            <span className="px-2 text-[11px] font-semibold uppercase tracking-wider text-pamplex-text-muted">
+              Offline — {offlineMembers.length}
+            </span>
+            {offlineMembers.map((m) => renderMemberRow(m, true))}
           </div>
-        </div>
-      )}
+        )}
+      </aside>
 
-      {/* Disponíveis */}
-      {onlineMembers.length > 0 && (
-        <div className="flex flex-col gap-1">
-          <span className="px-2 text-[11px] font-semibold uppercase tracking-wider text-pamplex-text-muted">
-            Disponíveis — {onlineMembers.length}
-          </span>
-          {onlineMembers.map((m) => renderMemberRow(m))}
-        </div>
+      {profileTarget && (
+        <ProfileCard
+          name={profileTarget.name}
+          username={profileTarget.username}
+          initials={profileTarget.initials}
+          accentColor={profileTarget.accentColor}
+          avatarUrl={profileTarget.avatarUrl}
+          bio={profileTarget.bio}
+          status={profileTarget.status}
+          role={profileTarget.role}
+          onClose={() => setProfileTarget(null)}
+        />
       )}
-
-      {/* Offline */}
-      {offlineMembers.length > 0 && (
-        <div className="flex flex-col gap-1">
-          <span className="px-2 text-[11px] font-semibold uppercase tracking-wider text-pamplex-text-muted">
-            Offline — {offlineMembers.length}
-          </span>
-          {offlineMembers.map((m) => renderMemberRow(m, true))}
-        </div>
-      )}
-    </aside>
+    </>
   );
 }

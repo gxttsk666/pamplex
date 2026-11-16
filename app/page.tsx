@@ -1002,23 +1002,23 @@ export default function PamplexApp() {
 
   const handleSendMessage = async (
     content: string,
-    imageFile?: File | null,
+    fileData?: File | null,
     replyTo?: PamplexMessage | null
   ) => {
     if (!currentChatChannel || !user) return;
 
     let finalContent = content.trim();
 
-    if (imageFile) {
-      const ext = imageFile.name.split(".").pop() || "png";
+    if (fileData) {
+      const ext = fileData.name.split(".").pop() || "bin";
       const filePath = `${user.id}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
 
       const { error: uploadError } = await supabase.storage
         .from("chat-attachments")
-        .upload(filePath, imageFile, { contentType: imageFile.type });
+        .upload(filePath, fileData, { contentType: fileData.type });
 
       if (uploadError) {
-        console.error("Erro ao enviar imagem:", uploadError.message);
+        console.error("Erro ao enviar ficheiro:", uploadError.message);
         return;
       }
 
@@ -1026,8 +1026,8 @@ export default function PamplexApp() {
         .from("chat-attachments")
         .getPublicUrl(filePath);
 
-      const imageUrl = publicUrlData.publicUrl;
-      finalContent = finalContent ? `${finalContent}\n${imageUrl}` : imageUrl;
+      const fileUrl = publicUrlData.publicUrl;
+      finalContent = finalContent ? `${finalContent}\n${fileUrl}` : fileUrl;
     }
 
     if (!finalContent) return;
@@ -1128,6 +1128,15 @@ export default function PamplexApp() {
 
   const handleToggleReaction = async (messageId: string, emoji: string) => {
     await toggleReaction(messageId, emoji);
+  };
+
+  const handlePinMessage = async (messageId: string, pin: boolean) => {
+    const { error } = await supabase
+      .from("messages")
+      .update({ is_pinned: pin } as Record<string, unknown>)
+      .eq("id", messageId);
+    if (error) { console.error("[pinMessage]:", error.message); return; }
+    updateMessages((prev) => prev.map((m) => m.id === messageId ? { ...m, isPinned: pin } : m));
   };
 
   const handleCreateServer = async (name: string) => {
@@ -1454,6 +1463,7 @@ export default function PamplexApp() {
                   onEditMessage={handleEditMessage}
                   onDeleteMessage={handleDeleteMessage}
                   onToggleReaction={handleToggleReaction}
+                  onPinMessage={handlePinMessage}
                   onTyping={handleTyping}
                 />
               </div>
