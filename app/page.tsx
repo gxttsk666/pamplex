@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { LogOut, Plus, UserPlus, Phone } from "lucide-react";
+import { LogOut, Plus, UserPlus, Phone, MonitorUp } from "lucide-react";
 import { AuthModal } from "@/components/auth/AuthModal";
 import { ServerRail } from "@/components/app/ServerRail";
 import { ChannelSidebar } from "@/components/app/ChannelSidebar";
@@ -125,11 +125,12 @@ export default function PamplexApp() {
   const [channelModalOpen, setChannelModalOpen] = useState(false);
   const [inviteModalOpen, setInviteModalOpen] = useState(false);
 
-  // Áudio / LiveKit
+  // Áudio / Vídeo / LiveKit
   const [connectedVoiceChannelId, setConnectedVoiceChannelId] = useState<string | null>(null);
   const [activeCallRoom, setActiveCallRoom] = useState<string | null>(null);
   const [isMuted, setIsMuted] = useState(false);
   const [isDeafened, setIsDeafened] = useState(false);
+  const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [voiceParticipants, setVoiceParticipants] = useState<VoiceParticipant[]>([]);
 
   // Presença global em canais de voz (visível mesmo fora da call)
@@ -945,6 +946,7 @@ export default function PamplexApp() {
     setActiveCallRoom(null);
     setIsMuted(false);
     setIsDeafened(false);
+    setIsScreenSharing(false);
     setVoiceParticipants([]);
   };
 
@@ -1073,12 +1075,31 @@ export default function PamplexApp() {
               username={currentUserProfile.name}
               muted={isMuted || isDeafened}
               deafened={isDeafened}
+              screenSharing={isScreenSharing}
+              onScreenShareChange={setIsScreenSharing}
               onDisconnect={handleDisconnectVoice}
               onParticipantsChange={setVoiceParticipants}
             />
           )}
 
           <div className="fixed bottom-4 right-4 z-40 flex items-center gap-2">
+            {(connectedVoiceChannelId || activeCallRoom) && (
+              <button
+                type="button"
+                onClick={() => setIsScreenSharing((prev) => !prev)}
+                title={isScreenSharing ? "Parar compartilhamento de tela" : "Compartilhar Tela"}
+                className={[
+                  "flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium backdrop-blur-md transition cursor-pointer",
+                  isScreenSharing
+                    ? "border-emerald-400/50 bg-emerald-500/20 text-emerald-300"
+                    : "border-teal-400/30 bg-teal-400/10 text-teal-300 hover:bg-teal-400/20",
+                ].join(" ")}
+              >
+                <MonitorUp className="h-3.5 w-3.5" />
+                {isScreenSharing ? "Compartilhando" : "Compartilhar Tela"}
+              </button>
+            )}
+
             {!isHomeActive && activeServer && (
               <button
                 type="button"

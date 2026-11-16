@@ -4,11 +4,14 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   LiveKitRoom,
   RoomAudioRenderer,
+  VideoTrack,
   useLocalParticipant,
   useParticipants,
+  useTracks,
 } from "@livekit/components-react";
+import { Track } from "livekit-client";
 import "@livekit/components-styles";
-import { Mic, MicOff, Volume2 } from "lucide-react";
+import { Maximize2, MonitorUp, X } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import {
   playDigitalConnect,
@@ -27,6 +30,8 @@ interface VoiceRoomModalProps {
   username: string;
   muted: boolean;
   deafened?: boolean;
+  screenSharing?: boolean;
+  onScreenShareChange?: (sharing: boolean) => void;
   onDisconnect: () => void;
   onParticipantsChange: (participants: VoiceParticipant[]) => void;
 }
@@ -34,25 +39,53 @@ interface VoiceRoomModalProps {
 function VoiceRoomInner({
   muted,
   deafened = false,
-  onDisconnect,
+  screenSharing = false,
+  onScreenShareChange,
   onParticipantsChange,
 }: {
   muted: boolean;
   deafened?: boolean;
-  onDisconnect: () => void;
+  screenSharing?: boolean;
+  onScreenShareChange?: (sharing: boolean) => void;
   onParticipantsChange: (participants: VoiceParticipant[]) => void;
 }) {
-  const { localParticipant, isMicrophoneEnabled } = useLocalParticipant();
+  const { localParticipant, isMicrophoneEnabled, isScreenShareEnabled } =
+    useLocalParticipant();
   const participants = useParticipants();
   const previousMicRef = useRef<boolean | null>(null);
+  const videoContainerRef = useRef<HTMLDivElement | null>(null);
 
-  // Sincroniza o estado externo de mute com o microfone real no LiveKit
+  // Captura transmissões de tela ativas na sala
+  const screenTracks = useTracks([Track.Source.ScreenShare], {
+    onlySubscribed: false,
+  });
+  const activeScreenTrack = screenTracks[0];
+
+  // Sincroniza Mute externo com LiveKit
   useEffect(() => {
     if (!localParticipant) return;
     localParticipant.setMicrophoneEnabled(!muted).catch(() => {});
   }, [muted, localParticipant]);
 
-  // Toca o som digital sempre que o estado real do microfone muda (ignora a leitura inicial)
+  // Sincroniza Compartilhamento de Tela com LiveKit
+  useEffect(() => {
+    if (!localParticipant) return;
+    if (localParticipant.isScreenShareEnabled !== screenSharing) {
+      localParticipant
+        .setScreenShareEnabled(screenSharing, { audio: true })
+        .catch(() => {
+          // Caso o utilizador cancele na janela do navegador
+          onScreenShareChange?.(false);
+        });
+    }
+  }, [screenSharing, localParticipant, onScreenShareChange]);
+
+  // Avisa o page.tsx caso o utilizador pare o compartilhamento pela barra nativa do navegador ("Interromper compartilhamento")
+  useEffect(() => {
+    onScreenShareChange?.(isScreenShareEnabled);
+  }, [isScreenShareEnabled, onScreenShareChange]);
+
+  // Sons de mutar/desmutar
   useEffect(() => {
     const previous = previousMicRef.current;
     previousMicRef.current = isMicrophoneEnabled;
@@ -61,7 +94,7 @@ function VoiceRoomInner({
     else playDigitalMute();
   }, [isMicrophoneEnabled]);
 
-  // Envia a lista ao vivo de participantes (identity = Supabase user.id) para o page.tsx
+  // Reporta participantes para a barra lateral
   useEffect(() => {
     const list: VoiceParticipant[] = participants.map((p) => ({
       id: p.identity,
@@ -70,77 +103,68 @@ function VoiceRoomInner({
     onParticipantsChange(list);
   }, [participants, onParticipantsChange]);
 
-  return (
-    <div className="flex flex-col gap-2.5 rounded-2xl border border-pamplex-border bg-pamplex-surface p-4 shadow-2xl w-80 text-pamplex-text-primary">
-      {/* Cabeçalho */}
-      <div className="flex items-center justify-between border-b border-pamplex-border pb-2">
-        <div className="flex items-center gap-2">
-          <span className="h-2.5 w-2.5 rounded-full bg-emerald-500 animate-pulse" />
-          <span className="text-xs font-bold truncate max-w-[180px]">
-            Voz Ativa — {participants.length} {participants.length === 1 ? "pessoa" : "pessoas"}
-          </span>
-        </div>
-        <button
-          type="button"
-          onClick={() => {
-            playDigitalDisconnect();
-            onDisconnect();
-          }}
-          className="rounded-[6px] bg-red-500/10 px-2 py-1 text-[11px] font-medium text-red-400 hover:bg-red-500/20 cursor-pointer"
-        >
-          Desconectar
-        </button>
-      </div>
+  const handleFullscreen = () => {
+    if (!videoContainerRef.current) return;
+    if (document.fullscreenElement) {
+      document.exitFullscreen().catch(() => {});
+    } else {
+      videoContainerRef.current.requestFullscreen().catch(() => {});
+    }
+  };
 
-      {/* Áudio remoto — mutado automaticamente se o utilizador ativar Deafen no Dock */}
+  return (
+    <>
+      {/* Áudio remoto sempre ativo em segundo plano */}
       <RoomAudioRenderer muted={deafened} />
 
-      {/* Lista de participantes na chamada */}
-      {participants.length > 0 && (
-        <div className="flex flex-col gap-1.5 max-h-40 overflow-y-auto pt-0.5">
-          {participants.map((p) => {
-            const displayName = p.name || p.identity || "Membro";
-            const micOn = p.isMicrophoneEnabled;
-            const speaking = p.isSpeaking;
+      {/* Só mostra janela na tela se houver alguém compartilhando tela */}
+      {activeScreenTrack && (
+        <div
+          ref={videoContainerRef}
+          className="fixed bottom-20 right-5 z-50 flex flex-col overflow-hidden rounded-2xl border border-pamplex-border bg-pamplex-surface shadow-2xl w-[420px] max-w-[92vw]"
+        >
+          <div className="flex items-center justify-between border-b border-pamplex-border px-3 py-2 bg-pamplex-dark/80 text-xs">
+            <div className="flex items-center gap-2 min-w-0">
+              <MonitorUp className="h-3.5 w-3.5 text-pamplex-turquesa shrink-0" />
+              <span className="truncate font-semibold text-pamplex-text-primary">
+                Tela de{" "}
+                {activeScreenTrack.participant.name ||
+                  activeScreenTrack.participant.identity}
+              </span>
+            </div>
 
-            return (
-              <div
-                key={p.sid}
-                className="flex items-center justify-between rounded-lg bg-pamplex-dark/60 px-2.5 py-1.5 text-xs"
+            <div className="flex items-center gap-1.5 shrink-0">
+              <button
+                type="button"
+                onClick={handleFullscreen}
+                title="Tela cheia"
+                className="rounded-md p-1 text-pamplex-text-secondary hover:bg-pamplex-elevated hover:text-pamplex-text-primary cursor-pointer"
               >
-                <div className="flex items-center gap-2 min-w-0">
-                  <div
-                    className={[
-                      "flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[10px] font-bold transition-all",
-                      speaking
-                        ? "bg-emerald-500 text-pamplex-dark ring-2 ring-emerald-400/60"
-                        : micOn
-                          ? "bg-pamplex-turquesa/20 text-pamplex-turquesa"
-                          : "bg-pamplex-elevated text-pamplex-text-muted opacity-60",
-                    ].join(" ")}
-                  >
-                    {displayName.slice(0, 2).toUpperCase()}
-                  </div>
-                  <span className="truncate font-medium text-pamplex-text-primary">
-                    {displayName}
-                    {p.isLocal ? " (você)" : ""}
-                  </span>
-                </div>
+                <Maximize2 className="h-3.5 w-3.5" />
+              </button>
+              {activeScreenTrack.participant.isLocal && (
+                <button
+                  type="button"
+                  onClick={() => onScreenShareChange?.(false)}
+                  title="Parar compartilhamento"
+                  className="flex items-center gap-1 rounded-md bg-red-500/15 px-2 py-0.5 text-[11px] font-medium text-red-400 hover:bg-red-500/25 cursor-pointer"
+                >
+                  <X className="h-3 w-3" />
+                  Parar
+                </button>
+              )}
+            </div>
+          </div>
 
-                <div className="flex items-center gap-1.5 shrink-0">
-                  {speaking && <Volume2 className="h-3.5 w-3.5 text-emerald-400 animate-pulse" />}
-                  {micOn ? (
-                    <Mic className="h-3.5 w-3.5 text-pamplex-text-secondary" />
-                  ) : (
-                    <MicOff className="h-3.5 w-3.5 text-red-400" />
-                  )}
-                </div>
-              </div>
-            );
-          })}
+          <div className="relative aspect-video w-full bg-black">
+            <VideoTrack
+              trackRef={activeScreenTrack}
+              className="h-full w-full object-contain"
+            />
+          </div>
         </div>
       )}
-    </div>
+    </>
   );
 }
 
@@ -149,6 +173,8 @@ export function VoiceRoomModal({
   username,
   muted,
   deafened = false,
+  screenSharing = false,
+  onScreenShareChange,
   onDisconnect,
   onParticipantsChange,
 }: VoiceRoomModalProps) {
@@ -175,17 +201,14 @@ export function VoiceRoomModal({
 
         if (!active) return;
         if (!res.ok || !data.token) {
-          const msg = data.error ?? `Erro HTTP ${res.status}`;
-          console.error("Erro ao obter token LiveKit:", msg);
-          setErrorMsg(msg);
+          setErrorMsg(data.error ?? `Erro HTTP ${res.status}`);
           return;
         }
 
         playDigitalConnect();
         setServerUrl(data.url ?? process.env.NEXT_PUBLIC_LIVEKIT_URL);
         setToken(data.token);
-      } catch (err) {
-        console.error("Erro ao obter token LiveKit:", err);
+      } catch {
         if (active) setErrorMsg("Falha de rede ao conectar no servidor de voz.");
       }
     };
@@ -215,38 +238,27 @@ export function VoiceRoomModal({
     );
   }
 
-  if (!token) {
-    return (
-      <div className="fixed bottom-20 right-5 z-50 flex items-center gap-3 rounded-xl border border-pamplex-border bg-pamplex-surface px-4 py-3 shadow-2xl text-xs text-pamplex-text-secondary">
-        <div className="h-4 w-4 animate-spin rounded-full border-2 border-pamplex-turquesa border-t-transparent" />
-        <span>Conectando à sala de voz...</span>
-      </div>
-    );
-  }
+  if (!token) return null;
 
   return (
-    <div className="fixed bottom-20 right-5 z-50">
-      <LiveKitRoom
-        video={false}
-        audio={true}
-        token={token}
-        serverUrl={serverUrl}
-        onError={(err) => {
-          console.error("Erro LiveKitRoom:", err);
-          setErrorMsg(err.message);
-        }}
-        onDisconnected={() => {
-          playDigitalDisconnect();
-          onDisconnect();
-        }}
-      >
-        <VoiceRoomInner
-          muted={muted}
-          deafened={deafened}
-          onDisconnect={onDisconnect}
-          onParticipantsChange={onParticipantsChange}
-        />
-      </LiveKitRoom>
-    </div>
+    <LiveKitRoom
+      video={false}
+      audio={true}
+      token={token}
+      serverUrl={serverUrl}
+      onError={(err) => setErrorMsg(err.message)}
+      onDisconnected={() => {
+        playDigitalDisconnect();
+        onDisconnect();
+      }}
+    >
+      <VoiceRoomInner
+        muted={muted}
+        deafened={deafened}
+        screenSharing={screenSharing}
+        onScreenShareChange={onScreenShareChange}
+        onParticipantsChange={onParticipantsChange}
+      />
+    </LiveKitRoom>
   );
 }
