@@ -8,6 +8,7 @@ import {
   useLocalParticipant,
   useParticipants,
   useTracks,
+  useRoomContext,
 } from "@livekit/components-react";
 import { Track } from "livekit-client";
 import "@livekit/components-styles";
@@ -52,14 +53,30 @@ function VoiceRoomInner({
   const { localParticipant, isMicrophoneEnabled, isScreenShareEnabled } =
     useLocalParticipant();
   const participants = useParticipants();
+  const room = useRoomContext();
   const previousMicRef = useRef<boolean | null>(null);
   const videoContainerRef = useRef<HTMLDivElement | null>(null);
+  const [, setScreenTrackVersion] = useState(0);
 
   // Captura transmissões de tela ativas na sala
   const screenTracks = useTracks([Track.Source.ScreenShare], {
     onlySubscribed: false,
   });
   const activeScreenTrack = screenTracks[0];
+
+  // Monitora mudanças nos tracks remotos para atualizar screen share em tempo real
+  useEffect(() => {
+    if (!room) return;
+    const handleTrackSubscribed = () => {
+      setScreenTrackVersion((v) => v + 1);
+    };
+    room.on("trackSubscribed", handleTrackSubscribed);
+    room.on("trackUnsubscribed", handleTrackSubscribed);
+    return () => {
+      room.off("trackSubscribed", handleTrackSubscribed);
+      room.off("trackUnsubscribed", handleTrackSubscribed);
+    };
+  }, [room]);
 
   // Sincroniza Mute externo com LiveKit
   useEffect(() => {
