@@ -32,7 +32,9 @@ interface VoiceRoomModalProps {
   muted: boolean;
   deafened?: boolean;
   screenSharing?: boolean;
+  cameraOn?: boolean;
   onScreenShareChange?: (sharing: boolean) => void;
+  onCameraChange?: (on: boolean) => void;
   onDisconnect: () => void;
   onParticipantsChange: (participants: VoiceParticipant[]) => void;
 }
@@ -41,16 +43,20 @@ function VoiceRoomInner({
   muted,
   deafened = false,
   screenSharing = false,
+  cameraOn = false,
   onScreenShareChange,
+  onCameraChange,
   onParticipantsChange,
 }: {
   muted: boolean;
   deafened?: boolean;
   screenSharing?: boolean;
+  cameraOn?: boolean;
   onScreenShareChange?: (sharing: boolean) => void;
+  onCameraChange?: (on: boolean) => void;
   onParticipantsChange: (participants: VoiceParticipant[]) => void;
 }) {
-  const { localParticipant, isMicrophoneEnabled, isScreenShareEnabled } =
+  const { localParticipant, isMicrophoneEnabled, isScreenShareEnabled, isCameraEnabled } =
     useLocalParticipant();
   const participants = useParticipants();
   const room = useRoomContext();
@@ -58,23 +64,22 @@ function VoiceRoomInner({
   const videoContainerRef = useRef<HTMLDivElement | null>(null);
   const [, setScreenTrackVersion] = useState(0);
 
-  // Captura transmissões de tela ativas na sala
-  const screenTracks = useTracks([Track.Source.ScreenShare], {
-    onlySubscribed: false,
-  });
+  // Captura transmissões de tela e câmara ativas na sala
+  const screenTracks = useTracks([Track.Source.ScreenShare], { onlySubscribed: false });
+  const cameraTracks = useTracks([Track.Source.Camera], { onlySubscribed: false });
   const activeScreenTrack = screenTracks[0];
+  // Câmeras remotas (exclui a local)
+  const remoteCameraTracks = cameraTracks.filter((t) => !t.participant.isLocal);
 
-  // Monitora mudanças nos tracks remotos para atualizar screen share em tempo real
+  // Monitora mudanças nos tracks remotos para atualizar em tempo real
   useEffect(() => {
     if (!room) return;
-    const handleTrackSubscribed = () => {
-      setScreenTrackVersion((v) => v + 1);
-    };
-    room.on("trackSubscribed", handleTrackSubscribed);
-    room.on("trackUnsubscribed", handleTrackSubscribed);
+    const handler = () => setScreenTrackVersion((v) => v + 1);
+    room.on("trackSubscribed", handler);
+    room.on("trackUnsubscribed", handler);
     return () => {
-      room.off("trackSubscribed", handleTrackSubscribed);
-      room.off("trackUnsubscribed", handleTrackSubscribed);
+      room.off("trackSubscribed", handler);
+      room.off("trackUnsubscribed", handler);
     };
   }, [room]);
 
@@ -83,6 +88,46 @@ function VoiceRoomInner({
     if (!localParticipant) return;
     localParticipant.setMicrophoneEnabled(!muted).catch(() => {});
   }, [muted, localParticipant]);
+
+  // Aplica dispositivo de microfone selecionado nas configurações
+  useEffect(() => {
+    if (!room) return;
+    try {
+      const saved = sessionStorage.getItem("pamplex_audio_input");
+      if (saved && saved !== "default") {
+        room.switchActiveDevice("audioinput", saved).catch(() => {});
+      }
+    } catch { /* Sem storage */ }
+  }, [room]);
+
+  // Aplica dispositivo de saída de áudio selecionado nas configurações
+  useEffect(() => {
+    try {
+      const saved = sessionStorage.getItem("pamplex_audio_output");
+      if (saved && saved !== "default" && "setSinkId" in HTMLAudioElement.prototype) {
+        const audioEls = document.getElementsByTagName("audio");
+        Array.from(audioEls).forEach((el) => {
+          (el as HTMLAudioElement & { setSinkId: (id: string) => Promise<void> })
+            .setSinkId(saved).catch(() => {});
+        });
+      }
+    } catch { /* Sem storage */ }
+  }, [room]);
+
+  // Sincroniza Câmara com LiveKit
+  useEffect(() => {
+    if (!localParticipant) return;
+    if (localParticipant.isCameraEnabled !== cameraOn) {
+      localParticipant.setCameraEnabled(cameraOn).catch(() => {
+        onCameraChange?.(false);
+      });
+    }
+  }, [cameraOn, localParticipant, onCameraChange]);
+
+  // Avisa page.tsx se câmara for desligada externamente
+  useEffect(() => {
+    onCameraChange?.(isCameraEnabled);
+  }, [isCameraEnabled, onCameraChange]);
 
   // Sincroniza Compartilhamento de Tela com LiveKit
   useEffect(() => {
@@ -134,22 +179,22 @@ function VoiceRoomInner({
       {/* Áudio remoto sempre ativo em segundo plano */}
       <RoomAudioRenderer muted={deafened} />
 
-      {/* Só mostra janela na tela se houver alguém compartilhando tela */}
-      {activeScreenTrack && (
+      {/* Janela flutuante: tela compartilhada + câmeras remotas */}
+      {(activeScreenTrack || remoteCameraTracks.length > 0) && (
         <div
           ref={videoContainerRef}
           className="fixed bottom-20 right-5 z-50 flex flex-col overflow-hidden rounded-2xl border border-pamplex-border bg-pamplex-surface shadow-2xl w-[420px] max-w-[92vw]"
         >
+          {/* Cabeçalho */}
           <div className="flex items-center justify-between border-b border-pamplex-border px-3 py-2 bg-pamplex-dark/80 text-xs">
             <div className="flex items-center gap-2 min-w-0">
               <MonitorUp className="h-3.5 w-3.5 text-pamplex-turquesa shrink-0" />
               <span className="truncate font-semibold text-pamplex-text-primary">
-                Tela de{" "}
-                {activeScreenTrack.participant.name ||
-                  activeScreenTrack.participant.identity}
+                {activeScreenTrack
+                  ? `Tela de ${activeScreenTrack.participant.name || activeScreenTrack.participant.identity}`
+                  : "Câmera na chamada"}
               </span>
             </div>
-
             <div className="flex items-center gap-1.5 shrink-0">
               <button
                 type="button"
@@ -159,7 +204,7 @@ function VoiceRoomInner({
               >
                 <Maximize2 className="h-3.5 w-3.5" />
               </button>
-              {activeScreenTrack.participant.isLocal && (
+              {activeScreenTrack?.participant.isLocal && (
                 <button
                   type="button"
                   onClick={() => onScreenShareChange?.(false)}
@@ -173,12 +218,35 @@ function VoiceRoomInner({
             </div>
           </div>
 
-          <div className="relative aspect-video w-full bg-black">
-            <VideoTrack
-              trackRef={activeScreenTrack}
-              className="h-full w-full object-contain"
-            />
-          </div>
+          {/* Vídeo principal: tela compartilhada tem prioridade */}
+          {activeScreenTrack && (
+            <div className="relative aspect-video w-full bg-black">
+              <VideoTrack
+                trackRef={activeScreenTrack}
+                className="h-full w-full object-contain"
+              />
+            </div>
+          )}
+
+          {/* Câmeras remotas em grid */}
+          {remoteCameraTracks.length > 0 && (
+            <div className={[
+              "grid gap-1 p-1 bg-pamplex-dark",
+              remoteCameraTracks.length === 1 ? "grid-cols-1" : "grid-cols-2",
+            ].join(" ")}>
+              {remoteCameraTracks.map((trackRef) => (
+                <div key={trackRef.participant.identity} className="relative aspect-video bg-black rounded-lg overflow-hidden">
+                  <VideoTrack
+                    trackRef={trackRef}
+                    className="h-full w-full object-cover"
+                  />
+                  <span className="absolute bottom-1 left-2 text-[10px] text-white/80 font-medium drop-shadow">
+                    {trackRef.participant.name || trackRef.participant.identity}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </>
@@ -191,7 +259,9 @@ export function VoiceRoomModal({
   muted,
   deafened = false,
   screenSharing = false,
+  cameraOn = false,
   onScreenShareChange,
+  onCameraChange,
   onDisconnect,
   onParticipantsChange,
 }: VoiceRoomModalProps) {
@@ -285,7 +355,9 @@ export function VoiceRoomModal({
         muted={muted}
         deafened={deafened}
         screenSharing={screenSharing}
+        cameraOn={cameraOn}
         onScreenShareChange={onScreenShareChange}
+        onCameraChange={onCameraChange}
         onParticipantsChange={onParticipantsChange}
       />
     </LiveKitRoom>

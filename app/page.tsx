@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { LogOut, Plus, UserPlus, Phone, MonitorUp } from "lucide-react";
+import { LogOut, Plus, UserPlus, Phone, MonitorUp, Video } from "lucide-react";
 import { AuthModal } from "@/components/auth/AuthModal";
 import { ServerRail } from "@/components/app/ServerRail";
 import { ChannelSidebar } from "@/components/app/ChannelSidebar";
@@ -12,6 +12,8 @@ import { MemberList } from "@/components/app/MemberList";
 import { FloatingDock } from "@/components/app/FloatingDock";
 import { VoiceRoomModal, type VoiceParticipant } from "@/components/app/VoiceRoomModal";
 import { ChannelModal, InviteModal, ServerModal } from "@/components/app/PamplexModals";
+import { IncomingCallBanner, type IncomingCall } from "@/components/app/IncomingCallBanner";
+import { SettingsModal } from "@/components/app/SettingsModal";
 import type {
   PamplexChannel,
   PamplexMember,
@@ -127,6 +129,11 @@ export default function PamplexApp() {
   const [serverModalTab, setServerModalTab] = useState<ServerModalTab>("create");
   const [channelModalOpen, setChannelModalOpen] = useState(false);
   const [inviteModalOpen, setInviteModalOpen] = useState(false);
+  const [settingsModalOpen, setSettingsModalOpen] = useState(false);
+
+  // Chamada recebida (DM)
+  const [incomingCall, setIncomingCall] = useState<IncomingCall | null>(null);
+  const callChannelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
 
   // Áudio / Vídeo / LiveKit
   const [connectedVoiceChannelId, setConnectedVoiceChannelId] = useState<string | null>(null);
@@ -134,6 +141,7 @@ export default function PamplexApp() {
   const [isMuted, setIsMuted] = useState(false);
   const [isDeafened, setIsDeafened] = useState(false);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
+  const [isCameraOn, setIsCameraOn] = useState(false);
   const [voiceParticipants, setVoiceParticipants] = useState<VoiceParticipant[]>([]);
 
   // Presença global em canais de voz (visível mesmo fora da call)
@@ -250,6 +258,74 @@ export default function PamplexApp() {
     writeVoiceState({ connectedVoiceChannelId, activeCallRoom, isMuted, isDeafened });
   }, [navRestored, connectedVoiceChannelId, activeCallRoom, isMuted, isDeafened]);
 
+  // Canal de chamadas recebidas via Supabase Realtime
+  useEffect(() => {
+    if (!user) {
+      setIncomingCall(null);
+      return;
+    }
+
+    const channel = supabase.channel(`pamplex:calls:${user.id}`);
+
+    channel
+      .on("broadcast", { event: "incoming_call" }, ({ payload }) => {
+        const p = payload as { fromUserId?: string; fromName?: string; roomName?: string };
+        if (!p.fromUserId || !p.fromName || !p.roomName) return;
+        // Ignora chamadas de utilizadores bloqueados
+        if (blockedIdsRef.current.has(p.fromUserId)) return;
+        setIncomingCall({ fromUserId: p.fromUserId, fromName: p.fromName, roomName: p.roomName });
+      })
+      .on("broadcast", { event: "call_declined" }, ({ payload }) => {
+        const p = payload as { roomName?: string };
+        // Se a sala recusada é a sala que iniciámos, encerrar chamada
+        setActiveCallRoom((prev) => (prev === p.roomName ? null : prev));
+      })
+      .subscribe();
+
+    callChannelRef.current = channel;
+
+    return () => {
+      supabase.removeChannel(channel);
+      callChannelRef.current = null;
+    };
+  }, [user, supabase]);
+
+  const handleInitiateDmCall = useCallback(
+    async (targetUserId: string, roomName: string) => {
+      if (!user) return;
+      const targetChannel = supabase.channel(`pamplex:calls:${targetUserId}`);
+      targetChannel.subscribe();
+      await new Promise<void>((r) => setTimeout(r, 300));
+      await targetChannel.send({
+        type: "broadcast",
+        event: "incoming_call",
+        payload: { fromUserId: user.id, fromName: currentUserProfile.name, roomName },
+      });
+      supabase.removeChannel(targetChannel);
+      setActiveCallRoom(roomName);
+    },
+    [user, supabase, currentUserProfile.name]
+  );
+
+  const handleAcceptCall = useCallback((roomName: string) => {
+    setActiveCallRoom(roomName);
+    setIncomingCall(null);
+  }, []);
+
+  const handleDeclineCall = useCallback(async () => {
+    if (!incomingCall || !user) return;
+    const callerChannel = supabase.channel(`pamplex:calls:${incomingCall.fromUserId}`);
+    callerChannel.subscribe();
+    await new Promise<void>((r) => setTimeout(r, 300));
+    await callerChannel.send({
+      type: "broadcast",
+      event: "call_declined",
+      payload: { roomName: incomingCall.roomName },
+    });
+    supabase.removeChannel(callerChannel);
+    setIncomingCall(null);
+  }, [incomingCall, user, supabase]);
+
   useEffect(() => {
     if (!user) {
       setLastReadByUserId({});
@@ -297,7 +373,9 @@ export default function PamplexApp() {
     const relationByUserId = new Map<string, PamplexMember["relation"]>();
     friendships.forEach((row) => {
       const otherId = row.user_id === user.id ? row.friend_id : row.user_id;
-      if (row.status === "accepted") {
+      if (row.status === "blocked" && row.user_id === user.id) {
+        relationByUserId.set(otherId, "blocked");
+      } else if (row.status === "accepted") {
         relationByUserId.set(otherId, "friend");
       } else if (row.user_id === user.id) {
         relationByUserId.set(otherId, "pending_outgoing");
@@ -333,6 +411,17 @@ export default function PamplexApp() {
     () => members.filter((member) => member.relation !== undefined),
     [members]
   );
+
+  const blockedIds = useMemo(
+    () => new Set(members.filter((m) => m.relation === "blocked").map((m) => m.id)),
+    [members]
+  );
+
+  // Ref para blockedIds acessível dentro de useEffect (evita closures desatualizadas)
+  const blockedIdsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    blockedIdsRef.current = blockedIds;
+  }, [blockedIds]);
 
   const memberById = useMemo(() => {
     const map = new Map<string, PamplexMember>();
@@ -678,6 +767,43 @@ export default function PamplexApp() {
     await refreshProfiles();
   };
 
+  const removeFriend = async (friendId: string) => {
+    if (!user) return;
+    await supabase
+      .from("friendships")
+      .delete()
+      .or(
+        `and(user_id.eq.${friendId},friend_id.eq.${user.id}),and(user_id.eq.${user.id},friend_id.eq.${friendId})`
+      );
+    await refreshProfiles();
+  };
+
+  const blockUser = async (targetId: string) => {
+    if (!user) return;
+    // Remove qualquer amizade existente e insere status bloqueado
+    await supabase
+      .from("friendships")
+      .delete()
+      .or(
+        `and(user_id.eq.${targetId},friend_id.eq.${user.id}),and(user_id.eq.${user.id},friend_id.eq.${targetId})`
+      );
+    await supabase
+      .from("friendships")
+      .upsert({ user_id: user.id, friend_id: targetId, status: "blocked" });
+    await refreshProfiles();
+  };
+
+  const unblockUser = async (targetId: string) => {
+    if (!user) return;
+    await supabase
+      .from("friendships")
+      .delete()
+      .eq("user_id", user.id)
+      .eq("friend_id", targetId)
+      .eq("status", "blocked");
+    await refreshProfiles();
+  };
+
   const sendFriendRequest = (username: string): { ok: boolean; message: string } => {
     if (!user) return { ok: false, message: "Faça login para adicionar amigos." };
 
@@ -949,6 +1075,30 @@ export default function PamplexApp() {
     return { ok: true };
   };
 
+  const handleRenameChannel = async (channelId: string, newName: string) => {
+    if (!newName.trim()) return;
+    const formatted = newName.trim().toLowerCase().replace(/\s+/g, "-");
+    await supabase.from("channels").update({ name: formatted }).eq("id", channelId);
+    await refreshServers();
+  };
+
+  const handleDeleteChannel = async (channelId: string) => {
+    if (activeChannelId === channelId) setActiveChannelId("");
+    if (connectedVoiceChannelId === channelId) handleDisconnectVoice();
+    await supabase.from("channels").delete().eq("id", channelId);
+    await refreshServers();
+  };
+
+  const handleRenameServer = async (newName: string) => {
+    if (!activeServer || !newName.trim()) return;
+    const cleanName = newName.trim();
+    await supabase
+      .from("servers")
+      .update({ name: cleanName, initials: cleanName.slice(0, 2).toUpperCase() })
+      .eq("id", activeServer.id);
+    await refreshServers();
+  };
+
   const inviteUrl = activeServer ? `${PRODUCTION_URL}/convite/${activeServer.id}` : "";
 
   const handleJoinVoiceChannel = (channelId: string) => {
@@ -965,6 +1115,7 @@ export default function PamplexApp() {
     setIsMuted(false);
     setIsDeafened(false);
     setIsScreenSharing(false);
+    setIsCameraOn(false);
     setVoiceParticipants([]);
     clearVoiceState();
   };
@@ -1008,7 +1159,7 @@ export default function PamplexApp() {
 
           {isHomeActive ? (
             <DirectSidebar
-              friends={relatedMembers}
+              friends={relatedMembers.filter((m) => !blockedIds.has(m.id))}
               activeDmUserId={activeDmUserId}
               pendingCount={pendingRequestsCount}
               unreadByUserId={unreadByUserId}
@@ -1024,9 +1175,13 @@ export default function PamplexApp() {
                 activeChannelId={activeChannel.id}
                 connectedVoiceChannelId={connectedVoiceChannelId}
                 members={serverMemberList}
+                isOwner={serverMemberships.some((m) => m.user_id === user?.id && m.role === "owner")}
                 onSelectTextChannel={setActiveChannelId}
                 onJoinVoiceChannel={handleJoinVoiceChannel}
                 onOpenInviteModal={() => setInviteModalOpen(true)}
+                onRenameChannel={handleRenameChannel}
+                onDeleteChannel={handleDeleteChannel}
+                onRenameServer={handleRenameServer}
               />
             )
           )}
@@ -1037,6 +1192,9 @@ export default function PamplexApp() {
               onStartDm={openDm}
               onAcceptRequest={acceptFriendRequest}
               onDeclineRequest={declineFriendRequest}
+              onRemoveFriend={removeFriend}
+              onBlockUser={blockUser}
+              onUnblockUser={unblockUser}
               onSendFriendRequest={sendFriendRequest}
             />
           ) : (
@@ -1045,15 +1203,20 @@ export default function PamplexApp() {
                 {/* Botões de Chamada em DMs no Topo */}
                 {isHomeActive && activeDmFriend && (
                   <div className="absolute right-4 top-3 z-20 flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setActiveCallRoom(`dm-${[user.id, activeDmFriend.id].sort().join("-")}`)}
-                      title="Iniciar chamada de voz"
-                      className="flex items-center gap-1.5 rounded-lg border border-teal-400/30 bg-teal-400/10 px-3 py-1.5 text-xs font-medium text-teal-300 backdrop-blur-md transition hover:bg-teal-400/20 cursor-pointer"
-                    >
-                      <Phone className="h-3.5 w-3.5" />
-                      Ligar
-                    </button>
+                    {!blockedIds.has(activeDmFriend.id) && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const roomName = `dm-${[user.id, activeDmFriend.id].sort().join("-")}`;
+                          handleInitiateDmCall(activeDmFriend.id, roomName);
+                        }}
+                        title="Iniciar chamada de voz"
+                        className="flex items-center gap-1.5 rounded-lg border border-teal-400/30 bg-teal-400/10 px-3 py-1.5 text-xs font-medium text-teal-300 backdrop-blur-md transition hover:bg-teal-400/20 cursor-pointer"
+                      >
+                        <Phone className="h-3.5 w-3.5" />
+                        Ligar
+                      </button>
+                    )}
                   </div>
                 )}
 
@@ -1086,6 +1249,7 @@ export default function PamplexApp() {
             onToggleMute={() => setIsMuted((prev) => !prev)}
             onToggleDeafen={handleToggleDeafen}
             onDisconnectVoice={handleDisconnectVoice}
+            onOpenSettings={() => setSettingsModalOpen(true)}
           />
 
           {(connectedVoiceChannelId || activeCallRoom) && (
@@ -1096,7 +1260,9 @@ export default function PamplexApp() {
                 muted={isMuted || isDeafened}
                 deafened={isDeafened}
                 screenSharing={isScreenSharing}
+                cameraOn={isCameraOn}
                 onScreenShareChange={setIsScreenSharing}
+                onCameraChange={setIsCameraOn}
                 onDisconnect={handleDisconnectVoice}
                 onParticipantsChange={setVoiceParticipants}
               />
@@ -1105,20 +1271,36 @@ export default function PamplexApp() {
 
           <div className="fixed bottom-4 right-4 z-40 flex items-center gap-2">
             {(connectedVoiceChannelId || activeCallRoom) && (
-              <button
-                type="button"
-                onClick={() => setIsScreenSharing((prev) => !prev)}
-                title={isScreenSharing ? "Parar compartilhamento de tela" : "Compartilhar Tela"}
-                className={[
-                  "flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium backdrop-blur-md transition cursor-pointer",
-                  isScreenSharing
-                    ? "border-emerald-400/50 bg-emerald-500/20 text-emerald-300"
-                    : "border-teal-400/30 bg-teal-400/10 text-teal-300 hover:bg-teal-400/20",
-                ].join(" ")}
-              >
-                <MonitorUp className="h-3.5 w-3.5" />
-                {isScreenSharing ? "Compartilhando" : "Compartilhar Tela"}
-              </button>
+              <>
+                <button
+                  type="button"
+                  onClick={() => setIsCameraOn((prev) => !prev)}
+                  title={isCameraOn ? "Desligar câmara" : "Ligar câmara"}
+                  className={[
+                    "flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium backdrop-blur-md transition cursor-pointer",
+                    isCameraOn
+                      ? "border-emerald-400/50 bg-emerald-500/20 text-emerald-300"
+                      : "border-teal-400/30 bg-teal-400/10 text-teal-300 hover:bg-teal-400/20",
+                  ].join(" ")}
+                >
+                  <Video className="h-3.5 w-3.5" />
+                  {isCameraOn ? "Câmara On" : "Câmara"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsScreenSharing((prev) => !prev)}
+                  title={isScreenSharing ? "Parar compartilhamento de tela" : "Compartilhar Tela"}
+                  className={[
+                    "flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium backdrop-blur-md transition cursor-pointer",
+                    isScreenSharing
+                      ? "border-emerald-400/50 bg-emerald-500/20 text-emerald-300"
+                      : "border-teal-400/30 bg-teal-400/10 text-teal-300 hover:bg-teal-400/20",
+                  ].join(" ")}
+                >
+                  <MonitorUp className="h-3.5 w-3.5" />
+                  {isScreenSharing ? "Compartilhando" : "Compartilhar Tela"}
+                </button>
+              </>
             )}
 
             {!isHomeActive && activeServer && (
@@ -1165,6 +1347,32 @@ export default function PamplexApp() {
               serverName={activeServer.name}
               inviteUrl={inviteUrl}
               onClose={() => setInviteModalOpen(false)}
+            />
+          )}
+
+          {/* Banner de chamada recebida */}
+          {incomingCall && (
+            <IncomingCallBanner
+              call={incomingCall}
+              onAccept={handleAcceptCall}
+              onDecline={handleDeclineCall}
+            />
+          )}
+
+          {/* Modal de Configurações */}
+          {user && (
+            <SettingsModal
+              open={settingsModalOpen}
+              currentName={currentUserProfile.name}
+              currentUsername={currentUserProfile.username}
+              currentStatus={
+                (profiles.find((p) => p.id === user.id)?.status as "online" | "idle" | "dnd") ?? "online"
+              }
+              userId={user.id}
+              onClose={() => setSettingsModalOpen(false)}
+              onSaved={(_name, _status) => {
+                refreshProfiles();
+              }}
             />
           )}
         </>

@@ -24,6 +24,7 @@ interface FloatingDockProps {
   onToggleMute: () => void;
   onToggleDeafen: () => void;
   onDisconnectVoice: () => void;
+  onOpenSettings: () => void;
 }
 
 export function FloatingDock({
@@ -35,6 +36,7 @@ export function FloatingDock({
   onToggleMute,
   onToggleDeafen,
   onDisconnectVoice,
+  onOpenSettings,
 }: FloatingDockProps) {
   return (
     <div className="pointer-events-none fixed inset-x-0 bottom-3 z-30 flex justify-center px-4">
@@ -133,7 +135,8 @@ export function FloatingDock({
 
           <button
             type="button"
-            title="Configurações de áudio"
+            onClick={onOpenSettings}
+            title="Configurações"
             className="flex h-9 w-9 items-center justify-center rounded-[10px] text-pamplex-text-secondary hover:bg-pamplex-elevated hover:text-pamplex-text-primary transition-colors cursor-pointer"
           >
             <Settings className="h-4 w-4" />

@@ -183,3 +183,52 @@ export function playDigitalUnmute() {
     // Ignora
   }
 }
+
+/**
+ * Incoming Call: Som de toque repetido quando há uma chamada de entrada (DM).
+ */
+export function playIncomingCall() {
+  try {
+    const ctx = createReadyAudioContext();
+    if (!ctx) return;
+
+    const now = ctx.currentTime;
+
+    // Repetir tom de chamada 4 vezes com intervalo
+    for (let i = 0; i < 4; i++) {
+      const startTime = now + i * 0.6;
+
+      // Primeiro tom (mais agudo) - 250ms
+      const osc1 = ctx.createOscillator();
+      const gain1 = ctx.createGain();
+      osc1.type = "sine";
+      osc1.frequency.setValueAtTime(800, startTime);
+      gain1.gain.setValueAtTime(0.12, startTime);
+      gain1.gain.exponentialRampToValueAtTime(0.0001, startTime + 0.25);
+      osc1.connect(gain1);
+      gain1.connect(ctx.destination);
+      osc1.start(startTime);
+      osc1.stop(startTime + 0.25);
+
+      // Segundo tom (mais grave) - sobreposição
+      const osc2 = ctx.createOscillator();
+      const gain2 = ctx.createGain();
+      osc2.type = "sine";
+      osc2.frequency.setValueAtTime(600, startTime);
+      gain2.gain.setValueAtTime(0.12, startTime);
+      gain2.gain.exponentialRampToValueAtTime(0.0001, startTime + 0.25);
+      osc2.connect(gain2);
+      gain2.connect(ctx.destination);
+      osc2.start(startTime);
+      osc2.stop(startTime + 0.25);
+
+      if (i === 3) {
+        osc2.onended = () => {
+          ctx.close().catch(() => {});
+        };
+      }
+    }
+  } catch {
+    // Ignora
+  }
+}

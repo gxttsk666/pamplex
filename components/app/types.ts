@@ -2,7 +2,7 @@ export type ChannelType = "text" | "voice";
 
 export type UserStatus = "online" | "idle" | "dnd" | "offline";
 
-export type FriendRelation = "friend" | "pending_incoming" | "pending_outgoing";
+export type FriendRelation = "friend" | "pending_incoming" | "pending_outgoing" | "blocked";
 
 export interface PamplexChannel {
   id: string;

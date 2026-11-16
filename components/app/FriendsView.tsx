@@ -5,6 +5,9 @@ import {
   Check,
   MessageSquare,
   Search,
+  Shield,
+  ShieldOff,
+  UserMinus,
   UserPlus,
   Users,
   X,
@@ -12,13 +15,16 @@ import {
 import { PamplexMember, UserStatus } from "./types";
 import { Button } from "@/components/ui/Button";
 
-type FriendsTab = "online" | "all" | "pending" | "add";
+type FriendsTab = "online" | "all" | "pending" | "blocked" | "add";
 
 interface FriendsViewProps {
   members: PamplexMember[];
   onStartDm: (userId: string) => void;
   onAcceptRequest: (userId: string) => void;
   onDeclineRequest: (userId: string) => void;
+  onRemoveFriend: (userId: string) => void;
+  onBlockUser: (userId: string) => void;
+  onUnblockUser: (userId: string) => void;
   onSendFriendRequest: (username: string) => { ok: boolean; message: string };
 }
 
@@ -41,6 +47,9 @@ export function FriendsView({
   onStartDm,
   onAcceptRequest,
   onDeclineRequest,
+  onRemoveFriend,
+  onBlockUser,
+  onUnblockUser,
   onSendFriendRequest,
 }: FriendsViewProps) {
   const [activeTab, setActiveTab] = useState<FriendsTab>("online");
@@ -69,6 +78,11 @@ export function FriendsView({
     [members]
   );
 
+  const blockedUsers = useMemo(
+    () => members.filter((m) => m.relation === "blocked"),
+    [members]
+  );
+
   const displayedList = useMemo(() => {
     const base =
       activeTab === "online"
@@ -77,7 +91,9 @@ export function FriendsView({
           ? friends
           : activeTab === "pending"
             ? pendingRequests
-            : [];
+            : activeTab === "blocked"
+              ? blockedUsers
+              : [];
 
     const q = search.trim().toLowerCase();
     if (!q) return base;
@@ -85,7 +101,7 @@ export function FriendsView({
       (u) =>
         u.name.toLowerCase().includes(q) || u.username.toLowerCase().includes(q)
     );
-  }, [activeTab, onlineFriends, friends, pendingRequests, search]);
+  }, [activeTab, onlineFriends, friends, pendingRequests, blockedUsers, search]);
 
   const handleAddSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -151,6 +167,24 @@ export function FriendsView({
             {pendingRequests.length > 0 && (
               <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-pamplex-turquesa px-1 text-[10px] font-bold text-pamplex-dark">
                 {pendingRequests.length}
+              </span>
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab("blocked")}
+            className={[
+              "flex items-center gap-1.5 rounded-[8px] px-2.5 py-1 text-xs font-medium transition-colors cursor-pointer",
+              activeTab === "blocked"
+                ? "bg-pamplex-elevated text-pamplex-text-primary"
+                : "text-pamplex-text-secondary hover:bg-pamplex-surface hover:text-pamplex-text-primary",
+            ].join(" ")}
+          >
+            <span>Bloqueados</span>
+            {blockedUsers.length > 0 && (
+              <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-pamplex-danger/80 px-1 text-[10px] font-bold text-white">
+                {blockedUsers.length}
               </span>
             )}
           </button>
@@ -236,11 +270,12 @@ export function FriendsView({
               {activeTab === "online" && `Disponíveis — ${displayedList.length}`}
               {activeTab === "all" && `Todos os Amigos — ${displayedList.length}`}
               {activeTab === "pending" && `Pedidos Pendentes — ${displayedList.length}`}
+              {activeTab === "blocked" && `Bloqueados — ${displayedList.length}`}
             </div>
 
             {displayedList.length === 0 ? (
               <div className="rounded-[12px] border border-pamplex-border bg-pamplex-surface/50 px-4 py-10 text-center text-sm text-pamplex-text-muted">
-                Nenhum amigo encontrado nesta aba.
+                {activeTab === "blocked" ? "Nenhum utilizador bloqueado." : "Nenhum amigo encontrado nesta aba."}
               </div>
             ) : (
               <div className="divide-y divide-pamplex-border/60 rounded-[12px] border border-pamplex-border bg-pamplex-surface/40">
@@ -288,7 +323,17 @@ export function FriendsView({
 
                     {/* Ações */}
                     <div className="flex items-center gap-2 shrink-0">
-                      {person.relation === "pending_incoming" ? (
+                      {person.relation === "blocked" ? (
+                        <button
+                          type="button"
+                          onClick={() => onUnblockUser(person.id)}
+                          title="Desbloquear"
+                          className="flex items-center gap-1.5 rounded-lg border border-pamplex-turquesa/30 bg-pamplex-turquesa/10 px-3 py-1 text-xs font-medium text-pamplex-turquesa hover:bg-pamplex-turquesa/20 transition cursor-pointer"
+                        >
+                          <Shield className="h-3.5 w-3.5" />
+                          Desbloquear
+                        </button>
+                      ) : person.relation === "pending_incoming" ? (
                         <>
                           <button
                             type="button"
@@ -317,14 +362,32 @@ export function FriendsView({
                           <X className="h-4 w-4" />
                         </button>
                       ) : (
-                        <button
-                          type="button"
-                          onClick={() => onStartDm(person.id)}
-                          title="Enviar mensagem privada"
-                          className="flex h-9 w-9 items-center justify-center rounded-full bg-pamplex-elevated text-pamplex-text-secondary hover:bg-pamplex-turquesa hover:text-pamplex-dark transition-colors cursor-pointer"
-                        >
-                          <MessageSquare className="h-4 w-4" />
-                        </button>
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => onStartDm(person.id)}
+                            title="Enviar mensagem privada"
+                            className="flex h-9 w-9 items-center justify-center rounded-full bg-pamplex-elevated text-pamplex-text-secondary hover:bg-pamplex-turquesa hover:text-pamplex-dark transition-colors cursor-pointer"
+                          >
+                            <MessageSquare className="h-4 w-4" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => onRemoveFriend(person.id)}
+                            title="Remover amigo"
+                            className="flex h-9 w-9 items-center justify-center rounded-full bg-pamplex-elevated text-pamplex-text-secondary hover:bg-amber-500/20 hover:text-amber-400 transition-colors cursor-pointer"
+                          >
+                            <UserMinus className="h-4 w-4" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => onBlockUser(person.id)}
+                            title="Bloquear utilizador"
+                            className="flex h-9 w-9 items-center justify-center rounded-full bg-pamplex-elevated text-pamplex-text-secondary hover:bg-pamplex-danger/20 hover:text-pamplex-danger transition-colors cursor-pointer"
+                          >
+                            <ShieldOff className="h-4 w-4" />
+                          </button>
+                        </>
                       )}
                     </div>
                   </div>
