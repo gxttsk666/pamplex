@@ -342,7 +342,7 @@ export function VoiceRoomModal({
 
   return (
     <LiveKitRoom
-      video={true}
+      video={false}
       audio={true}
       token={token}
       serverUrl={serverUrl}
