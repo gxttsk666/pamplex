@@ -293,16 +293,25 @@ export default function PamplexApp() {
   const handleInitiateDmCall = useCallback(
     async (targetUserId: string, roomName: string) => {
       if (!user) return;
-      const targetChannel = supabase.channel(`pamplex:calls:${targetUserId}`);
-      targetChannel.subscribe();
-      await new Promise<void>((r) => setTimeout(r, 300));
+      // Entra imediatamente na sala (não bloqueia a UI enquanto envia o aviso)
+      setActiveCallRoom(roomName);
+      // Envia aviso de chamada ao destinatário via broadcast
+      const targetChannel = supabase.channel(`pamplex:calls:${targetUserId}`, {
+        config: { broadcast: { self: false } },
+      });
+      await new Promise<void>((resolve) => {
+        targetChannel.subscribe((status) => {
+          if (status === "SUBSCRIBED") resolve();
+        });
+        // Timeout de segurança: 3 segundos
+        setTimeout(resolve, 3000);
+      });
       await targetChannel.send({
         type: "broadcast",
         event: "incoming_call",
         payload: { fromUserId: user.id, fromName: currentUserProfile.name, roomName },
       });
       supabase.removeChannel(targetChannel);
-      setActiveCallRoom(roomName);
     },
     [user, supabase, currentUserProfile.name]
   );
@@ -314,16 +323,23 @@ export default function PamplexApp() {
 
   const handleDeclineCall = useCallback(async () => {
     if (!incomingCall || !user) return;
-    const callerChannel = supabase.channel(`pamplex:calls:${incomingCall.fromUserId}`);
-    callerChannel.subscribe();
-    await new Promise<void>((r) => setTimeout(r, 300));
+    setIncomingCall(null);
+    // Avisa quem ligou que a chamada foi recusada
+    const callerChannel = supabase.channel(`pamplex:calls:${incomingCall.fromUserId}`, {
+      config: { broadcast: { self: false } },
+    });
+    await new Promise<void>((resolve) => {
+      callerChannel.subscribe((status) => {
+        if (status === "SUBSCRIBED") resolve();
+      });
+      setTimeout(resolve, 3000);
+    });
     await callerChannel.send({
       type: "broadcast",
       event: "call_declined",
       payload: { roomName: incomingCall.roomName },
     });
     supabase.removeChannel(callerChannel);
-    setIncomingCall(null);
   }, [incomingCall, user, supabase]);
 
   useEffect(() => {
@@ -781,26 +797,39 @@ export default function PamplexApp() {
   const blockUser = async (targetId: string) => {
     if (!user) return;
     // Remove qualquer amizade existente e insere status bloqueado
-    await supabase
+    const { error: delErr } = await supabase
       .from("friendships")
       .delete()
       .or(
         `and(user_id.eq.${targetId},friend_id.eq.${user.id}),and(user_id.eq.${user.id},friend_id.eq.${targetId})`
       );
-    await supabase
+    if (delErr) console.error("[blockUser] delete:", delErr.message);
+
+    const { error: insertErr } = await supabase
       .from("friendships")
-      .upsert({ user_id: user.id, friend_id: targetId, status: "blocked" });
+      .insert({ user_id: user.id, friend_id: targetId, status: "blocked" });
+    if (insertErr) {
+      console.error("[blockUser] insert:", insertErr.message, insertErr.code);
+      // Se falhou por constraint (código 23514 = check_violation), tenta update
+      if (insertErr.code === "23514" || insertErr.message.includes("check")) {
+        // Tabela tem constraint — usa upsert forçado
+        const { error: upErr } = await supabase
+          .from("friendships")
+          .upsert({ user_id: user.id, friend_id: targetId, status: "blocked" }, { onConflict: "user_id,friend_id" });
+        if (upErr) console.error("[blockUser] upsert fallback:", upErr.message);
+      }
+    }
     await refreshProfiles();
   };
 
   const unblockUser = async (targetId: string) => {
     if (!user) return;
-    await supabase
+    const { error } = await supabase
       .from("friendships")
       .delete()
       .eq("user_id", user.id)
-      .eq("friend_id", targetId)
-      .eq("status", "blocked");
+      .eq("friend_id", targetId);
+    if (error) console.error("[unblockUser]:", error.message);
     await refreshProfiles();
   };
 
@@ -1078,25 +1107,28 @@ export default function PamplexApp() {
   const handleRenameChannel = async (channelId: string, newName: string) => {
     if (!newName.trim()) return;
     const formatted = newName.trim().toLowerCase().replace(/\s+/g, "-");
-    await supabase.from("channels").update({ name: formatted }).eq("id", channelId);
-    await refreshServers();
+    const { error } = await supabase.from("channels").update({ name: formatted }).eq("id", channelId);
+    if (error) console.error("[renameChannel]:", error.message);
+    else await refreshServers();
   };
 
   const handleDeleteChannel = async (channelId: string) => {
     if (activeChannelId === channelId) setActiveChannelId("");
     if (connectedVoiceChannelId === channelId) handleDisconnectVoice();
-    await supabase.from("channels").delete().eq("id", channelId);
-    await refreshServers();
+    const { error } = await supabase.from("channels").delete().eq("id", channelId);
+    if (error) console.error("[deleteChannel]:", error.message);
+    else await refreshServers();
   };
 
   const handleRenameServer = async (newName: string) => {
     if (!activeServer || !newName.trim()) return;
     const cleanName = newName.trim();
-    await supabase
+    const { error } = await supabase
       .from("servers")
       .update({ name: cleanName, initials: cleanName.slice(0, 2).toUpperCase() })
       .eq("id", activeServer.id);
-    await refreshServers();
+    if (error) console.error("[renameServer]:", error.message);
+    else await refreshServers();
   };
 
   const inviteUrl = activeServer ? `${PRODUCTION_URL}/convite/${activeServer.id}` : "";
