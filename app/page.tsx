@@ -1089,16 +1089,18 @@ export default function PamplexApp() {
           />
 
           {(connectedVoiceChannelId || activeCallRoom) && (
-            <VoiceRoomModal
-              roomName={connectedVoiceChannelId ?? activeCallRoom!}
-              username={currentUserProfile.name}
-              muted={isMuted || isDeafened}
-              deafened={isDeafened}
-              screenSharing={isScreenSharing}
-              onScreenShareChange={setIsScreenSharing}
-              onDisconnect={handleDisconnectVoice}
-              onParticipantsChange={setVoiceParticipants}
-            />
+            <div className="absolute w-0 h-0">
+              <VoiceRoomModal
+                roomName={connectedVoiceChannelId ?? activeCallRoom!}
+                username={currentUserProfile.name}
+                muted={isMuted || isDeafened}
+                deafened={isDeafened}
+                screenSharing={isScreenSharing}
+                onScreenShareChange={setIsScreenSharing}
+                onDisconnect={handleDisconnectVoice}
+                onParticipantsChange={setVoiceParticipants}
+              />
+            </div>
           )}
 
           <div className="fixed bottom-4 right-4 z-40 flex items-center gap-2">
