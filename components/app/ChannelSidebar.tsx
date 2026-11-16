@@ -22,6 +22,7 @@ interface ChannelSidebarProps {
   members: PamplexMember[];
   isOwner?: boolean;
   unreadChannelIds?: Set<string>;
+  globalVoiceByUserId?: Record<string, { channelName: string; channelId: string; serverId: string }>;
   onSelectTextChannel: (channelId: string) => void;
   onJoinVoiceChannel: (channelId: string) => void;
   onOpenInviteModal: () => void;
@@ -37,6 +38,7 @@ export function ChannelSidebar({
   members,
   isOwner = false,
   unreadChannelIds = new Set(),
+  globalVoiceByUserId = {},
   onSelectTextChannel,
   onJoinVoiceChannel,
   onOpenInviteModal,
@@ -78,6 +80,7 @@ export function ChannelSidebar({
       : [];
 
     const isEditing = editingChannelId === channel.id;
+    const voiceInChannelCount = !isText ? Object.values(globalVoiceByUserId).filter(call => call.channelId === channel.id).length : 0;
 
     return (
       <div key={channel.id} className="flex flex-col gap-0.5">
@@ -125,6 +128,13 @@ export function ChannelSidebar({
           {/* Ponto de não-lido */}
           {(channel.unread || hasUnread) && !isSelected && !isOwner && (
             <span className="h-2 w-2 rounded-full bg-pamplex-turquesa shrink-0" />
+          )}
+
+          {/* Badge de participantes em voz */}
+          {!isText && voiceInChannelCount > 0 && (
+            <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-pamplex-esmeralda/20 px-1.5 text-[10px] font-bold text-pamplex-esmeralda shrink-0">
+              {voiceInChannelCount}
+            </span>
           )}
 
           {/* Menu de owner */}

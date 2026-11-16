@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useMemo, useState } from "react";
-import { Folder, FolderOpen, Plus } from "lucide-react";
+import { Folder, FolderOpen, Phone, Plus } from "lucide-react";
 import { PamplexServer } from "./types";
 
 interface ServerRailProps {
@@ -10,6 +10,7 @@ interface ServerRailProps {
   isHomeActive: boolean;
   homeBadgeCount: number;
   unreadServerIds?: Set<string>;
+  globalVoiceByUserId?: Record<string, { channelName: string; channelId: string; serverId: string }>;
   onSelectHome: () => void;
   onSelectServer: (serverId: string) => void;
   onOpenCreateServer: () => void;
@@ -21,6 +22,7 @@ export function ServerRail({
   isHomeActive,
   homeBadgeCount,
   unreadServerIds = new Set(),
+  globalVoiceByUserId = {},
   onSelectHome,
   onSelectServer,
   onOpenCreateServer,
@@ -28,6 +30,15 @@ export function ServerRail({
   const [openFolders, setOpenFolders] = useState<Record<string, boolean>>({
     Projetos: true,
   });
+
+  // Calcula servidores com participantes em voz
+  const serversInCall = useMemo(() => {
+    const result = new Set<string>();
+    for (const call of Object.values(globalVoiceByUserId)) {
+      result.add(call.serverId);
+    }
+    return result;
+  }, [globalVoiceByUserId]);
 
   const { rootServers, folderMap } = useMemo(() => {
     const roots: PamplexServer[] = [];
@@ -51,6 +62,7 @@ export function ServerRail({
   const renderServerButton = (server: PamplexServer) => {
     const isActive = !isHomeActive && server.id === activeServerId;
     const hasUnread = !isActive && unreadServerIds.has(server.id);
+    const hasVoiceCall = serversInCall.has(server.id);
 
     return (
       <div key={server.id} className="relative flex w-full items-center justify-center">
@@ -65,13 +77,13 @@ export function ServerRail({
         <button
           type="button"
           onClick={() => onSelectServer(server.id)}
-          title={`${server.name}${server.hasActiveVoice ? " • Voz ativa" : ""}`}
+          title={`${server.name}${hasVoiceCall ? " • Pessoas em voz ativa" : ""}`}
           className={[
             "group relative flex h-12 w-12 items-center justify-center font-semibold text-sm transition-all duration-150 cursor-pointer select-none",
             isActive
               ? "rounded-[14px] bg-pamplex-turquesa text-pamplex-dark shadow-md"
               : "rounded-[18px] bg-pamplex-surface text-pamplex-text-primary hover:rounded-[14px] hover:bg-pamplex-elevated",
-            server.hasActiveVoice && !isActive
+            hasVoiceCall && !isActive
               ? "ring-2 ring-pamplex-esmeralda/80"
               : "",
           ].join(" ")}
@@ -83,18 +95,10 @@ export function ServerRail({
             <span className="absolute -bottom-1 -right-1 h-3.5 w-3.5 rounded-full border-2 border-pamplex-dark bg-white" />
           )}
 
-          {/* Radar Vivo: ponto pulsante quando há alguém falando */}
-          {server.hasActiveVoice && (
-            <span className="absolute -top-1 -right-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-pamplex-dark">
-              <span
-                className={[
-                  "h-2.5 w-2.5 rounded-full bg-pamplex-esmeralda",
-                  server.isSpeakingNow ? "animate-ping" : "",
-                ].join(" ")}
-              />
-              {server.isSpeakingNow && (
-                <span className="absolute h-2.5 w-2.5 rounded-full bg-pamplex-esmeralda" />
-              )}
+          {/* Indicador de voz ativa: telefone verde no canto */}
+          {hasVoiceCall && (
+            <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-pamplex-esmeralda">
+              <Phone className="h-2.5 w-2.5 text-pamplex-dark" />
             </span>
           )}
 

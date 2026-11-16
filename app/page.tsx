@@ -481,6 +481,8 @@ export default function PamplexApp() {
           status,
           accentColor: AUTHOR_COLOR,
           relation: relationByUserId.get(profile.id),
+          avatarUrl: profile.avatar_url ?? undefined,
+          customStatus: profile.bio || undefined,
         };
       });
   }, [user, profiles, friendships, onlineIds]);
@@ -690,6 +692,21 @@ export default function PamplexApp() {
     voiceParticipants,
     globalVoiceByUserId,
   ]);
+
+  // Servidores com call ativa (para exibir bolha verde na ServerRail)
+  const serversWithActiveVoice = useMemo(() => {
+    const activeVoiceChannelIds = new Set<string>();
+    if (connectedVoiceChannelId) activeVoiceChannelIds.add(connectedVoiceChannelId);
+    Object.values(globalVoiceByUserId).forEach(call => activeVoiceChannelIds.add(call.channelId));
+
+    const result = new Set<string>();
+    for (const server of servers) {
+      if (server.channels.some(c => c.type === "voice" && activeVoiceChannelIds.has(c.id))) {
+        result.add(server.id);
+      }
+    }
+    return result;
+  }, [servers, connectedVoiceChannelId, globalVoiceByUserId]);
 
   const pendingRequestsCount = useMemo(
     () => members.filter((member) => member.relation === "pending_incoming").length,
@@ -1344,6 +1361,7 @@ export default function PamplexApp() {
               isHomeActive={isHomeActive}
               homeBadgeCount={pendingRequestsCount + totalUnreadDms}
               unreadServerIds={unreadServerIds}
+              serversWithActiveVoice={serversWithActiveVoice}
               onSelectHome={() => { setIsHomeActive(true); setMobileDrawerOpen(false); }}
               onSelectServer={(id) => { handleSelectServer(id); setMobileDrawerOpen(false); }}
               onOpenCreateServer={() => {

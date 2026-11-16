@@ -226,7 +226,7 @@ export function usePamplexData(): UsePamplexDataResult {
     const currentUser = { id: userId };
 
     const [profilesResult, friendshipsResult] = await Promise.all([
-      supabase.from("profiles").select("id, display_name, username, status"),
+      supabase.from("profiles").select("id, display_name, username, status, avatar_url, bio"),
       supabase
         .from("friendships")
         .select("id, user_id, friend_id, status")

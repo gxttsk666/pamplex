@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useMemo, useState } from "react";
-import { MessageSquare, Search, UserPlus, Users, X } from "lucide-react";
+import { MessageSquare, Pin, PinOff, Search, UserPlus, Users, X } from "lucide-react";
 import { PamplexMember, UserStatus } from "./types";
 
 export interface DmPreview {
@@ -36,10 +36,30 @@ export function DirectSidebar({
   onSelectDmUser,
 }: DirectSidebarProps) {
   const [query, setQuery] = useState("");
+  const [pinnedDmIds, setPinnedDmIds] = useState<Set<string>>(() => {
+    try {
+      const stored = localStorage.getItem("pamplex_pinned_dms");
+      return new Set(stored ? JSON.parse(stored) : []);
+    } catch {
+      return new Set();
+    }
+  });
+
+  const togglePinDm = (userId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setPinnedDmIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(userId)) next.delete(userId);
+      else next.add(userId);
+      localStorage.setItem("pamplex_pinned_dms", JSON.stringify(Array.from(next)));
+      return next;
+    });
+  };
 
   const sortedFriends = useMemo(() => {
     const accepted = friends.filter((f) => f.relation === "friend");
-    return [...accepted].sort((a, b) => {
+    const pinned = accepted.filter(f => pinnedDmIds.has(f.id)).sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
+    const unpinned = accepted.filter(f => !pinnedDmIds.has(f.id)).sort((a, b) => {
       const tsA = lastDmByUserId[a.id]?.timestamp ?? 0;
       const tsB = lastDmByUserId[b.id]?.timestamp ?? 0;
       if (tsA !== tsB) return tsB - tsA;
@@ -48,7 +68,8 @@ export function DirectSidebar({
       if (onlineA !== onlineB) return onlineB - onlineA;
       return a.name.localeCompare(b.name, "pt-BR");
     });
-  }, [friends, lastDmByUserId]);
+    return [...pinned, ...unpinned];
+  }, [friends, lastDmByUserId, pinnedDmIds]);
 
   const filteredFriends = useMemo(() => {
     const clean = query.trim().toLowerCase();
@@ -202,7 +223,21 @@ export function DirectSidebar({
                       {unread}
                     </span>
                   ) : (
-                    <MessageSquare className="h-3.5 w-3.5 shrink-0 text-pamplex-text-muted opacity-0 group-hover:opacity-100 transition-opacity" />
+                    <>
+                      <button
+                        type="button"
+                        onClick={(e) => togglePinDm(friend.id, e)}
+                        title={pinnedDmIds.has(friend.id) ? "Desafixar" : "Fixar"}
+                        className="shrink-0 text-pamplex-text-muted hover:text-amber-400 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
+                      >
+                        {pinnedDmIds.has(friend.id) ? (
+                          <Pin className="h-3.5 w-3.5 fill-amber-400 text-amber-400" />
+                        ) : (
+                          <PinOff className="h-3.5 w-3.5" />
+                        )}
+                      </button>
+                      <MessageSquare className="h-3.5 w-3.5 shrink-0 text-pamplex-text-muted opacity-0 group-hover:opacity-100 transition-opacity" />
+                    </>
                   )}
                 </button>
               );
