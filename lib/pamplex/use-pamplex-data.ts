@@ -41,6 +41,8 @@ export interface CurrentUserProfile {
   name: string;
   username: string;
   initials: string;
+  avatarUrl?: string | null;
+  bio?: string | null;
 }
 
 interface UsePamplexDataResult {
@@ -209,12 +211,16 @@ export function usePamplexData(): UsePamplexDataResult {
     const username = (
       (user?.user_metadata?.username as string | undefined) || fallback
     ).toLowerCase();
+    // Lê avatar e bio do perfil carregado (array profiles)
+    const ownProfile = profiles.find((p) => p.id === user?.id);
     return {
-      name: displayName,
-      username,
-      initials: displayName.slice(0, 2).toUpperCase(),
+      name: ownProfile ? (ownProfile.display_name || ownProfile.username || displayName) : displayName,
+      username: ownProfile?.username?.toLowerCase() || username,
+      initials: (ownProfile?.display_name || displayName).slice(0, 2).toUpperCase(),
+      avatarUrl: ownProfile?.avatar_url ?? null,
+      bio: ownProfile?.bio ?? null,
     };
-  }, [user]);
+  }, [user, profiles]);
 
   const currentUserProfileRef = useRef(currentUserProfile);
   useEffect(() => {
@@ -331,11 +337,14 @@ export function usePamplexData(): UsePamplexDataResult {
     }
 
     const authorNames = new Map<string, string>();
-    profilesRef.current.forEach((profile) =>
-      authorNames.set(profile.id, profileDisplayName(profile))
-    );
+    const authorAvatars = new Map<string, string | null>();
+    profilesRef.current.forEach((profile) => {
+      authorNames.set(profile.id, profileDisplayName(profile));
+      authorAvatars.set(profile.id, profile.avatar_url ?? null);
+    });
     if (!authorNames.has(currentUser.id)) {
       authorNames.set(currentUser.id, currentUserProfileRef.current.name);
+      authorAvatars.set(currentUser.id, currentUserProfileRef.current.avatarUrl ?? null);
     }
 
     const rawReactions = reactionsRes.data ?? [];
@@ -343,6 +352,7 @@ export function usePamplexData(): UsePamplexDataResult {
     setMessages(
       asRows<MessageRow>(messagesRes.data).map((row) => {
         const authorName = authorNames.get(row.author_id) || "Membro";
+        const authorAvatarUrl = authorAvatars.get(row.author_id) ?? null;
         const { content, replyTo } = parseMessageContentAndReply(row.content);
 
         const msgReactionsMap = new Map<string, { count: number; reacted: boolean }>();
@@ -371,6 +381,7 @@ export function usePamplexData(): UsePamplexDataResult {
           authorName,
           authorInitials: authorName.slice(0, 2).toUpperCase(),
           authorColor: AUTHOR_COLOR,
+          authorAvatarUrl,
           content,
           timestamp: new Date(row.created_at).getTime(),
           reactions,
@@ -492,6 +503,7 @@ export function usePamplexData(): UsePamplexDataResult {
     setMessages((prev) => {
       const { content, replyTo } = parseMessageContentAndReply(row.content);
       const exists = prev.some((m) => m.id === row.id);
+      const authorAvatarUrl = profilesRef.current.find(p => p.id === row.author_id)?.avatar_url ?? null;
       if (exists) {
         return prev.map((m) =>
           m.id === row.id ? { ...m, content, replyTo } : m
@@ -506,6 +518,7 @@ export function usePamplexData(): UsePamplexDataResult {
           authorName,
           authorInitials: authorName.slice(0, 2).toUpperCase(),
           authorColor: AUTHOR_COLOR,
+          authorAvatarUrl,
           content,
           timestamp: new Date(row.created_at).getTime(),
           reactions: [],

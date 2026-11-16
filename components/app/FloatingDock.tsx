@@ -10,12 +10,14 @@ import {
   VolumeX,
 } from "lucide-react";
 import { playDigitalDisconnect } from "@/lib/sounds";
+import { AvatarImg } from "./AvatarImg";
 
 interface FloatingDockProps {
   currentUser: {
     name: string;
     username: string;
     initials: string;
+    avatarUrl?: string | null;
   };
   connectedChannelName: string | null;
   connectedServerName: string | null;
@@ -44,9 +46,12 @@ export function FloatingDock({
         {/* Esquerda: Perfil do Utilizador */}
         <div className="flex items-center gap-2.5 min-w-0">
           <div className="relative shrink-0">
-            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-pamplex-turquesa text-xs font-bold text-pamplex-dark">
-              {currentUser.initials}
-            </div>
+            <AvatarImg
+              avatarUrl={currentUser.avatarUrl}
+              initials={currentUser.initials}
+              accentColor="bg-pamplex-turquesa text-pamplex-dark"
+              size="md"
+            />
             <span className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-pamplex-esmeralda ring-2 ring-pamplex-surface" />
           </div>
           <div className="flex flex-col min-w-0">

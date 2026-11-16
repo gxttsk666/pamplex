@@ -60,6 +60,7 @@ export interface PamplexMessage {
   authorInitials: string;
   authorColor: string;
   authorRole?: string;
+  authorAvatarUrl?: string | null;
   content: string;
   timestamp: number;
   reactions: MessageReaction[];

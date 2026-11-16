@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import { useState } from "react";
 import {
   ChevronDown,
   ChevronRight,
@@ -14,6 +14,7 @@ import {
   Volume2,
 } from "lucide-react";
 import { PamplexChannel, PamplexMember, PamplexServer } from "./types";
+import { AvatarImg } from "./AvatarImg";
 
 interface ChannelSidebarProps {
   server: PamplexServer;
@@ -175,9 +176,13 @@ export function ChannelSidebar({
             {voiceMembers.map((member) => (
               <div key={member.id} className="flex items-center justify-between rounded-[6px] px-2 py-1 text-xs text-pamplex-text-secondary">
                 <div className="flex items-center gap-2 truncate">
-                  <span className={["flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-bold", member.accentColor, member.isSpeaking ? "ring-2 ring-pamplex-esmeralda" : ""].join(" ")}>
-                    {member.initials}
-                  </span>
+                  <AvatarImg
+                    avatarUrl={member.avatarUrl}
+                    initials={member.initials}
+                    accentColor={member.accentColor}
+                    size="sm"
+                    speaking={member.isSpeaking}
+                  />
                   <span className="truncate">{member.name}</span>
                 </div>
                 {member.isMuted && <MicOff className="h-3 w-3 text-pamplex-danger shrink-0" />}

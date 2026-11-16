@@ -3,6 +3,7 @@
 import React, { useMemo, useState } from "react";
 import { MessageSquare, Pin, PinOff, Search, UserPlus, Users, X } from "lucide-react";
 import { PamplexMember, UserStatus } from "./types";
+import { AvatarImg } from "./AvatarImg";
 
 export interface DmPreview {
   text: string;
@@ -179,14 +180,12 @@ export function DirectSidebar({
                   ].join(" ")}
                 >
                   <div className="relative shrink-0">
-                    <div
-                      className={[
-                        "flex h-8 w-8 items-center justify-center rounded-full text-xs font-bold",
-                        friend.accentColor,
-                      ].join(" ")}
-                    >
-                      {friend.initials}
-                    </div>
+                    <AvatarImg
+                      avatarUrl={friend.avatarUrl}
+                      initials={friend.initials}
+                      accentColor={friend.accentColor}
+                      size="sm"
+                    />
                     <span
                       className={[
                         "absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full ring-2 ring-pamplex-surface",

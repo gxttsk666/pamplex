@@ -25,6 +25,7 @@ import {
 import { Badge } from "@/components/ui/Badge";
 import { PamplexChannel, PamplexMessage } from "./types";
 import { ProfileCard } from "./ProfileCard";
+import { AvatarImg } from "./AvatarImg";
 
 interface ChatAreaProps {
   channel: PamplexChannel;
@@ -486,9 +487,13 @@ export function ChatArea({
                   {formatTime(msg.timestamp)}
                 </span>
               ) : (
-                <div onClick={() => openProfile(msg)}
-                  className={["flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-bold select-none mt-0.5 cursor-pointer hover:opacity-80 transition-opacity", msg.authorColor].join(" ")}>
-                  {msg.authorInitials}
+                <div onClick={() => openProfile(msg)} className="mt-0.5 shrink-0 cursor-pointer hover:opacity-80 transition-opacity">
+                  <AvatarImg
+                    avatarUrl={msg.authorAvatarUrl}
+                    initials={msg.authorInitials}
+                    accentColor={msg.authorColor}
+                    size="md"
+                  />
                 </div>
               )}
 
