@@ -132,6 +132,75 @@ export default function PamplexApp() {
   const [isDeafened, setIsDeafened] = useState(false);
   const [voiceParticipants, setVoiceParticipants] = useState<VoiceParticipant[]>([]);
 
+  // Presença global em canais de voz (visível mesmo fora da call)
+  const [globalVoiceByUserId, setGlobalVoiceByUserId] = useState<
+    Record<string, { channelId: string; isMuted: boolean }>
+  >({});
+  const voicePresenceRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
+  const latestVoiceTrackRef = useRef<{ channelId: string | null; isMuted: boolean }>({
+    channelId: null,
+    isMuted: false,
+  });
+
+  latestVoiceTrackRef.current = {
+    channelId: connectedVoiceChannelId,
+    isMuted: isMuted || isDeafened,
+  };
+
+  useEffect(() => {
+    if (!user) {
+      setGlobalVoiceByUserId({});
+      return;
+    }
+
+    const channel = supabase.channel("pamplex:voice-state", {
+      config: { presence: { key: user.id } },
+    });
+
+    channel
+      .on("presence", { event: "sync" }, () => {
+        const state = channel.presenceState<{
+          channelId?: string | null;
+          isMuted?: boolean;
+        }>();
+        const next: Record<string, { channelId: string; isMuted: boolean }> = {};
+
+        Object.entries(state).forEach(([uid, presences]) => {
+          const latest = presences[presences.length - 1];
+          if (latest?.channelId) {
+            next[uid] = {
+              channelId: latest.channelId,
+              isMuted: Boolean(latest.isMuted),
+            };
+          }
+        });
+
+        setGlobalVoiceByUserId(next);
+      })
+      .subscribe(async (status) => {
+        if (status === "SUBSCRIBED") {
+          await channel.track(latestVoiceTrackRef.current);
+        }
+      });
+
+    voicePresenceRef.current = channel;
+
+    return () => {
+      supabase.removeChannel(channel);
+      voicePresenceRef.current = null;
+    };
+  }, [user, supabase]);
+
+  useEffect(() => {
+    if (!voicePresenceRef.current) return;
+    voicePresenceRef.current
+      .track({
+        channelId: connectedVoiceChannelId,
+        isMuted: isMuted || isDeafened,
+      })
+      .catch(() => {});
+  }, [connectedVoiceChannelId, isMuted, isDeafened]);
+
   // Persistência de leitura por DM
   const [lastReadByUserId, setLastReadByUserId] = useState<Record<string, number>>({});
   const [lastReadLoaded, setLastReadLoaded] = useState(false);
@@ -339,18 +408,28 @@ export default function PamplexApp() {
       isSpeaking: !isMuted && !isDeafened && Boolean(connectedVoiceChannelId),
     };
 
-    const voiceChannelId = connectedVoiceChannelId ?? activeCallRoom ?? undefined;
+    const currentVoiceRoom = connectedVoiceChannelId ?? activeCallRoom ?? undefined;
 
     const others = members
       .filter((member) => roleById.has(member.id))
       .map((member) => {
-        const inVoice = voiceParticipants.find((p) => p.id === member.id);
+        const liveInSameRoom = voiceParticipants.find((p) => p.id === member.id);
+        const globalPresence = globalVoiceByUserId[member.id];
+
+        const resolvedChannelId = liveInSameRoom
+          ? currentVoiceRoom
+          : globalPresence?.channelId;
+
+        const resolvedMuted = liveInSameRoom
+          ? liveInSameRoom.muted
+          : globalPresence?.isMuted;
+
         return {
           ...member,
           role: toRoleLabel(roleById.get(member.id)),
-          inVoiceChannelId: inVoice ? voiceChannelId : undefined,
-          isMuted: inVoice ? inVoice.muted : undefined,
-          isSpeaking: inVoice ? !inVoice.muted : undefined,
+          inVoiceChannelId: resolvedChannelId,
+          isMuted: resolvedChannelId ? resolvedMuted : undefined,
+          isSpeaking: resolvedChannelId ? !resolvedMuted : undefined,
         };
       });
 
@@ -365,6 +444,7 @@ export default function PamplexApp() {
     isMuted,
     isDeafened,
     voiceParticipants,
+    globalVoiceByUserId,
   ]);
 
   const pendingRequestsCount = useMemo(
