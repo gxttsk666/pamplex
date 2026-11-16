@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { LogOut, Plus, UserPlus, Phone, MonitorUp, Video } from "lucide-react";
+import { LogOut, Plus, UserPlus, Phone, MonitorUp, Video, UserMinus, ShieldOff } from "lucide-react";
 import { AuthModal } from "@/components/auth/AuthModal";
 import { ServerRail } from "@/components/app/ServerRail";
 import { ChannelSidebar } from "@/components/app/ChannelSidebar";
@@ -1266,23 +1266,46 @@ export default function PamplexApp() {
           ) : (
             currentChatChannel && (
               <div className="relative flex flex-1 flex-col h-full overflow-hidden">
-                {/* Botões de Chamada em DMs no Topo */}
+                {/* Cabeçalho de ações da DM — aparece acima do ChatArea */}
                 {isHomeActive && activeDmFriend && (
-                  <div className="absolute right-4 top-3 z-20 flex items-center gap-2">
+                  <div className="absolute right-4 top-3 z-30 flex items-center gap-2">
                     {!blockedIds.has(activeDmFriend.id) && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const roomName = `dm-${[user.id, activeDmFriend.id].sort().join("-")}`;
-                          handleInitiateDmCall(activeDmFriend.id, roomName);
-                        }}
-                        title="Iniciar chamada de voz"
-                        className="flex items-center gap-1.5 rounded-lg border border-teal-400/30 bg-teal-400/10 px-3 py-1.5 text-xs font-medium text-teal-300 backdrop-blur-md transition hover:bg-teal-400/20 cursor-pointer"
-                      >
-                        <Phone className="h-3.5 w-3.5" />
-                        Ligar
-                      </button>
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const roomName = `dm-${[user.id, activeDmFriend.id].sort().join("-")}`;
+                            handleInitiateDmCall(activeDmFriend.id, roomName);
+                          }}
+                          title="Iniciar chamada de voz"
+                          className="flex items-center gap-1.5 rounded-lg border border-teal-400/30 bg-teal-400/10 px-3 py-1.5 text-xs font-medium text-teal-300 backdrop-blur-md transition hover:bg-teal-400/20 cursor-pointer"
+                        >
+                          <Phone className="h-3.5 w-3.5" />
+                          Ligar
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => removeFriend(activeDmFriend.id)}
+                          title="Remover amigo"
+                          className="flex items-center gap-1.5 rounded-lg border border-amber-400/30 bg-amber-400/10 px-3 py-1.5 text-xs font-medium text-amber-300 backdrop-blur-md transition hover:bg-amber-400/20 cursor-pointer"
+                        >
+                          <UserMinus className="h-3.5 w-3.5" />
+                          Remover
+                        </button>
+                      </>
                     )}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        blockUser(activeDmFriend.id);
+                        setActiveDmUserId(null);
+                      }}
+                      title="Bloquear utilizador"
+                      className="flex items-center gap-1.5 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-1.5 text-xs font-medium text-red-400 backdrop-blur-md transition hover:bg-red-500/20 cursor-pointer"
+                    >
+                      <ShieldOff className="h-3.5 w-3.5" />
+                      {blockedIds.has(activeDmFriend.id) ? "Bloqueado" : "Bloquear"}
+                    </button>
                   </div>
                 )}
 
@@ -1292,8 +1315,8 @@ export default function PamplexApp() {
                   currentUserId={user.id}
                   currentUserUsername={currentUserProfile.username}
                   typingUsers={typingUsers}
-                  showMembers={!isHomeActive && showMembers}
-                  onToggleMembers={() => setShowMembers((prev) => !prev)}
+                  showMembers={isHomeActive ? false : showMembers}
+                  onToggleMembers={isHomeActive ? () => {} : () => setShowMembers((prev) => !prev)}
                   onSendMessage={handleSendMessage}
                   onEditMessage={handleEditMessage}
                   onDeleteMessage={handleDeleteMessage}
