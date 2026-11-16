@@ -1075,7 +1075,7 @@ export default function PamplexApp() {
             )
           )}
 
-          {!isHomeActive && showMembers && <MemberList members={serverMemberList} />}
+          {!isHomeActive && showMembers && !!currentChatChannel && <MemberList members={serverMemberList} />}
 
           <FloatingDock
             currentUser={currentUserProfile}
