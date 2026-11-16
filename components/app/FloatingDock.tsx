@@ -1,6 +1,5 @@
 "use client";
 
-import React from "react";
 import {
   Headphones,
   Mic,
@@ -10,6 +9,7 @@ import {
   Settings,
   VolumeX,
 } from "lucide-react";
+import { playDigitalDisconnect } from "@/lib/sounds";
 
 interface FloatingDockProps {
   currentUser: {
@@ -98,7 +98,10 @@ export function FloatingDock({
           {connectedChannelName && (
             <button
               type="button"
-              onClick={onDisconnectVoice}
+              onClick={() => {
+                playDigitalDisconnect();
+                onDisconnectVoice();
+              }}
               title="Desconectar da sala de voz"
               className="flex h-9 items-center gap-1.5 rounded-[10px] bg-pamplex-danger px-3 text-xs font-semibold text-pamplex-text-primary transition-all hover:brightness-110 cursor-pointer"
             >

@@ -10,7 +10,7 @@ import { FriendsView } from "@/components/app/FriendsView";
 import { ChatArea } from "@/components/app/ChatArea";
 import { MemberList } from "@/components/app/MemberList";
 import { FloatingDock } from "@/components/app/FloatingDock";
-import { VoiceRoomModal } from "@/components/app/VoiceRoomModal";
+import { VoiceRoomModal, type VoiceParticipant } from "@/components/app/VoiceRoomModal";
 import { ChannelModal, InviteModal, ServerModal } from "@/components/app/PamplexModals";
 import type {
   PamplexChannel,
@@ -20,6 +20,7 @@ import type {
 } from "@/components/app/types";
 import { Button } from "@/components/ui/Button";
 import { usePamplexData } from "@/lib/pamplex/use-pamplex-data";
+import { playDigitalDisconnect } from "@/lib/sounds";
 import {
   OFFLINE_STATUS,
   ONLINE_STATUS,
@@ -129,6 +130,7 @@ export default function PamplexApp() {
   const [activeCallRoom, setActiveCallRoom] = useState<string | null>(null);
   const [isMuted, setIsMuted] = useState(false);
   const [isDeafened, setIsDeafened] = useState(false);
+  const [voiceParticipants, setVoiceParticipants] = useState<VoiceParticipant[]>([]);
 
   // Persistência de leitura por DM
   const [lastReadByUserId, setLastReadByUserId] = useState<Record<string, number>>({});
@@ -333,13 +335,24 @@ export default function PamplexApp() {
       role: toRoleLabel(roleById.get(user.id)),
       accentColor: AUTHOR_COLOR,
       inVoiceChannelId: connectedVoiceChannelId ?? undefined,
-      isMuted,
+      isMuted: isMuted || isDeafened,
       isSpeaking: !isMuted && !isDeafened && Boolean(connectedVoiceChannelId),
     };
 
+    const voiceChannelId = connectedVoiceChannelId ?? activeCallRoom ?? undefined;
+
     const others = members
       .filter((member) => roleById.has(member.id))
-      .map((member) => ({ ...member, role: toRoleLabel(roleById.get(member.id)) }));
+      .map((member) => {
+        const inVoice = voiceParticipants.find((p) => p.id === member.id);
+        return {
+          ...member,
+          role: toRoleLabel(roleById.get(member.id)),
+          inVoiceChannelId: inVoice ? voiceChannelId : undefined,
+          isMuted: inVoice ? inVoice.muted : undefined,
+          isSpeaking: inVoice ? !inVoice.muted : undefined,
+        };
+      });
 
     return [me, ...others];
   }, [
@@ -348,8 +361,10 @@ export default function PamplexApp() {
     serverMemberships,
     currentUserProfile,
     connectedVoiceChannelId,
+    activeCallRoom,
     isMuted,
     isDeafened,
+    voiceParticipants,
   ]);
 
   const pendingRequestsCount = useMemo(
@@ -792,10 +807,14 @@ export default function PamplexApp() {
   };
 
   const handleDisconnectVoice = () => {
+    if (connectedVoiceChannelId || activeCallRoom) {
+      playDigitalDisconnect();
+    }
     setConnectedVoiceChannelId(null);
     setActiveCallRoom(null);
     setIsMuted(false);
     setIsDeafened(false);
+    setVoiceParticipants([]);
   };
 
   const handleToggleDeafen = () => {
@@ -921,7 +940,10 @@ export default function PamplexApp() {
             <VoiceRoomModal
               roomName={connectedVoiceChannelId ?? activeCallRoom!}
               username={currentUserProfile.name}
+              muted={isMuted || isDeafened}
+              deafened={isDeafened}
               onDisconnect={handleDisconnectVoice}
+              onParticipantsChange={setVoiceParticipants}
             />
           )}
 
