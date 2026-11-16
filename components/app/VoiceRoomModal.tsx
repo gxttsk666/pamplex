@@ -68,9 +68,9 @@ function VoiceRoomInner({
   const screenTracks = useTracks([Track.Source.ScreenShare], { onlySubscribed: false });
   const cameraTracks = useTracks([Track.Source.Camera], { onlySubscribed: false });
   const activeScreenTrack = screenTracks[0];
-  // Todas as câmeras ativas (locais e remotas)
+  // Apenas câmeras com vídeo realmente ativo (não publicadas mas desligadas)
   const activeCameraTracks = cameraTracks.filter(
-    (t) => t.publication?.isSubscribed !== false
+    (t) => t.publication?.isMuted === false && t.publication?.track != null
   );
 
   // Monitora mudanças nos tracks remotos para atualizar em tempo real
