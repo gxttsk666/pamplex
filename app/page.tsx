@@ -784,40 +784,52 @@ export default function PamplexApp() {
     await supabase
       .from("friendships")
       .delete()
-      .or(
-        `and(user_id.eq.${friendId},friend_id.eq.${user.id}),and(user_id.eq.${user.id},friend_id.eq.${friendId})`
-      );
+      .eq("user_id", friendId)
+      .eq("friend_id", user.id);
+    await supabase
+      .from("friendships")
+      .delete()
+      .eq("user_id", user.id)
+      .eq("friend_id", friendId);
     await refreshProfiles();
   };
 
   const removeFriend = async (friendId: string) => {
     if (!user) return;
+    // Dois deletes separados: cada direção da amizade
     await supabase
       .from("friendships")
       .delete()
-      .or(
-        `and(user_id.eq.${friendId},friend_id.eq.${user.id}),and(user_id.eq.${user.id},friend_id.eq.${friendId})`
-      );
+      .eq("user_id", user.id)
+      .eq("friend_id", friendId);
+    await supabase
+      .from("friendships")
+      .delete()
+      .eq("user_id", friendId)
+      .eq("friend_id", user.id);
     await refreshProfiles();
   };
 
   const blockUser = async (targetId: string) => {
     if (!user) return;
-    // Primeiro remove qualquer amizade existente nos dois sentidos
+    // Remove nos dois sentidos
     await supabase
       .from("friendships")
       .delete()
-      .or(
-        `and(user_id.eq.${targetId},friend_id.eq.${user.id}),and(user_id.eq.${user.id},friend_id.eq.${targetId})`
-      );
-    // Tenta INSERT com status "blocked"
+      .eq("user_id", user.id)
+      .eq("friend_id", targetId);
+    await supabase
+      .from("friendships")
+      .delete()
+      .eq("user_id", targetId)
+      .eq("friend_id", user.id);
+    // Insere com status "blocked"
     const { error: insertErr } = await supabase
       .from("friendships")
       .insert({ user_id: user.id, friend_id: targetId, status: "blocked" });
     if (insertErr) {
-      // Se a constraint rejeitar "blocked", tenta com "pending" como marcador
-      // e guarda o estado localmente via sessionStorage
-      console.error("[blockUser] insert falhou:", insertErr.message, "— guardando localmente");
+      // Tabela tem constraint que não aceita "blocked" — guarda localmente
+      console.error("[blockUser] insert:", insertErr.message);
       try {
         const key = `pamplex_blocked_${user.id}`;
         const existing = JSON.parse(sessionStorage.getItem(key) ?? "[]") as string[];
@@ -836,7 +848,6 @@ export default function PamplexApp() {
       .delete()
       .eq("user_id", user.id)
       .eq("friend_id", targetId);
-    // Limpa também o fallback local
     try {
       const key = `pamplex_blocked_${user.id}`;
       const existing = JSON.parse(sessionStorage.getItem(key) ?? "[]") as string[];
