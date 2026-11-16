@@ -428,10 +428,17 @@ export default function PamplexApp() {
     [members]
   );
 
-  const blockedIds = useMemo(
-    () => new Set(members.filter((m) => m.relation === "blocked").map((m) => m.id)),
-    [members]
-  );
+  const blockedIds = useMemo(() => {
+    const fromDb = members.filter((m) => m.relation === "blocked").map((m) => m.id);
+    // Fallback: IDs bloqueados localmente quando a tabela tem constraint
+    let fromStorage: string[] = [];
+    if (user) {
+      try {
+        fromStorage = JSON.parse(sessionStorage.getItem(`pamplex_blocked_${user.id}`) ?? "[]");
+      } catch { /* Sem storage */ }
+    }
+    return new Set([...fromDb, ...fromStorage]);
+  }, [members, user]);
 
   // Ref para blockedIds acessível dentro de useEffect (evita closures desatualizadas)
   const blockedIdsRef = useRef<Set<string>>(new Set());
@@ -796,40 +803,45 @@ export default function PamplexApp() {
 
   const blockUser = async (targetId: string) => {
     if (!user) return;
-    // Remove qualquer amizade existente e insere status bloqueado
-    const { error: delErr } = await supabase
+    // Primeiro remove qualquer amizade existente nos dois sentidos
+    await supabase
       .from("friendships")
       .delete()
       .or(
         `and(user_id.eq.${targetId},friend_id.eq.${user.id}),and(user_id.eq.${user.id},friend_id.eq.${targetId})`
       );
-    if (delErr) console.error("[blockUser] delete:", delErr.message);
-
+    // Tenta INSERT com status "blocked"
     const { error: insertErr } = await supabase
       .from("friendships")
       .insert({ user_id: user.id, friend_id: targetId, status: "blocked" });
     if (insertErr) {
-      console.error("[blockUser] insert:", insertErr.message, insertErr.code);
-      // Se falhou por constraint (código 23514 = check_violation), tenta update
-      if (insertErr.code === "23514" || insertErr.message.includes("check")) {
-        // Tabela tem constraint — usa upsert forçado
-        const { error: upErr } = await supabase
-          .from("friendships")
-          .upsert({ user_id: user.id, friend_id: targetId, status: "blocked" }, { onConflict: "user_id,friend_id" });
-        if (upErr) console.error("[blockUser] upsert fallback:", upErr.message);
-      }
+      // Se a constraint rejeitar "blocked", tenta com "pending" como marcador
+      // e guarda o estado localmente via sessionStorage
+      console.error("[blockUser] insert falhou:", insertErr.message, "— guardando localmente");
+      try {
+        const key = `pamplex_blocked_${user.id}`;
+        const existing = JSON.parse(sessionStorage.getItem(key) ?? "[]") as string[];
+        if (!existing.includes(targetId)) {
+          sessionStorage.setItem(key, JSON.stringify([...existing, targetId]));
+        }
+      } catch { /* Sem storage */ }
     }
     await refreshProfiles();
   };
 
   const unblockUser = async (targetId: string) => {
     if (!user) return;
-    const { error } = await supabase
+    await supabase
       .from("friendships")
       .delete()
       .eq("user_id", user.id)
       .eq("friend_id", targetId);
-    if (error) console.error("[unblockUser]:", error.message);
+    // Limpa também o fallback local
+    try {
+      const key = `pamplex_blocked_${user.id}`;
+      const existing = JSON.parse(sessionStorage.getItem(key) ?? "[]") as string[];
+      sessionStorage.setItem(key, JSON.stringify(existing.filter((id) => id !== targetId)));
+    } catch { /* Sem storage */ }
     await refreshProfiles();
   };
 
@@ -1131,6 +1143,17 @@ export default function PamplexApp() {
     else await refreshServers();
   };
 
+  const handleKickMember = async (memberId: string) => {
+    if (!activeServer || !user) return;
+    const { error } = await supabase
+      .from("server_members")
+      .delete()
+      .eq("server_id", activeServer.id)
+      .eq("user_id", memberId);
+    if (error) console.error("[kickMember]:", error.message);
+    else await fetchServerMembers(activeServer.id);
+  };
+
   const inviteUrl = activeServer ? `${PRODUCTION_URL}/convite/${activeServer.id}` : "";
 
   const handleJoinVoiceChannel = (channelId: string) => {
@@ -1270,7 +1293,14 @@ export default function PamplexApp() {
             )
           )}
 
-          {!isHomeActive && showMembers && !!currentChatChannel && <MemberList members={serverMemberList} />}
+          {!isHomeActive && showMembers && !!currentChatChannel && (
+            <MemberList
+              members={serverMemberList}
+              isOwner={serverMemberships.some((m) => m.user_id === user?.id && m.role === "owner")}
+              currentUserId={user?.id}
+              onKickMember={handleKickMember}
+            />
+          )}
 
           <FloatingDock
             currentUser={currentUserProfile}

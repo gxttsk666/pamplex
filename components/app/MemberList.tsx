@@ -1,12 +1,15 @@
 "use client";
 
 import React from "react";
-import { MicOff, Volume2 } from "lucide-react";
+import { MicOff, Volume2, UserX } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 import { PamplexMember, UserStatus } from "./types";
 
 interface MemberListProps {
   members: PamplexMember[];
+  isOwner?: boolean;
+  currentUserId?: string;
+  onKickMember?: (memberId: string) => void;
 }
 
 const statusDotColors: Record<UserStatus, string> = {
@@ -16,7 +19,7 @@ const statusDotColors: Record<UserStatus, string> = {
   offline: "bg-pamplex-text-muted",
 };
 
-export function MemberList({ members }: MemberListProps) {
+export function MemberList({ members, isOwner = false, currentUserId, onKickMember }: MemberListProps) {
   const inCallMembers = members.filter((m) => Boolean(m.inVoiceChannelId));
   const onlineMembers = members.filter(
     (m) => !m.inVoiceChannelId && m.status !== "offline"
@@ -27,7 +30,7 @@ export function MemberList({ members }: MemberListProps) {
     <div
       key={member.id}
       className={[
-        "flex items-center justify-between rounded-[8px] px-2 py-1.5 transition-colors hover:bg-pamplex-surface cursor-pointer",
+        "group flex items-center justify-between rounded-[8px] px-2 py-1.5 transition-colors hover:bg-pamplex-surface cursor-pointer",
         dimmed ? "opacity-50" : "",
       ].join(" ")}
     >
@@ -62,15 +65,25 @@ export function MemberList({ members }: MemberListProps) {
         </div>
       </div>
 
-      {member.inVoiceChannelId && (
-        <div className="flex items-center gap-1 shrink-0">
-          {member.isMuted ? (
+      <div className="flex items-center gap-1 shrink-0">
+        {member.inVoiceChannelId && (
+          member.isMuted ? (
             <MicOff className="h-3.5 w-3.5 text-pamplex-danger" />
           ) : (
             <Volume2 className="h-3.5 w-3.5 text-pamplex-esmeralda" />
-          )}
-        </div>
-      )}
+          )
+        )}
+        {isOwner && member.id !== currentUserId && onKickMember && (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onKickMember(member.id); }}
+            title="Expulsar do servidor"
+            className="hidden group-hover:flex h-5 w-5 items-center justify-center rounded-[5px] text-pamplex-text-muted hover:bg-pamplex-danger/15 hover:text-pamplex-danger transition cursor-pointer"
+          >
+            <UserX className="h-3.5 w-3.5" />
+          </button>
+        )}
+      </div>
     </div>
   );
 

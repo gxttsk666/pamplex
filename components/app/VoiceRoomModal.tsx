@@ -68,8 +68,10 @@ function VoiceRoomInner({
   const screenTracks = useTracks([Track.Source.ScreenShare], { onlySubscribed: false });
   const cameraTracks = useTracks([Track.Source.Camera], { onlySubscribed: false });
   const activeScreenTrack = screenTracks[0];
-  // Câmeras remotas (exclui a local)
-  const remoteCameraTracks = cameraTracks.filter((t) => !t.participant.isLocal);
+  // Todas as câmeras ativas (locais e remotas)
+  const activeCameraTracks = cameraTracks.filter(
+    (t) => t.publication?.isSubscribed !== false
+  );
 
   // Monitora mudanças nos tracks remotos para atualizar em tempo real
   useEffect(() => {
@@ -179,8 +181,8 @@ function VoiceRoomInner({
       {/* Áudio remoto sempre ativo em segundo plano */}
       <RoomAudioRenderer muted={deafened} />
 
-      {/* Janela flutuante: tela compartilhada + câmeras remotas */}
-      {(activeScreenTrack || remoteCameraTracks.length > 0) && (
+      {/* Janela flutuante: tela compartilhada + câmeras ativas */}
+      {(activeScreenTrack || activeCameraTracks.length > 0) && (
         <div
           ref={videoContainerRef}
           className="fixed bottom-20 right-5 z-50 flex flex-col overflow-hidden rounded-2xl border border-pamplex-border bg-pamplex-surface shadow-2xl w-[420px] max-w-[92vw]"
@@ -228,20 +230,20 @@ function VoiceRoomInner({
             </div>
           )}
 
-          {/* Câmeras remotas em grid */}
-          {remoteCameraTracks.length > 0 && (
+          {/* Grid de câmeras (locais e remotas) */}
+          {activeCameraTracks.length > 0 && (
             <div className={[
               "grid gap-1 p-1 bg-pamplex-dark",
-              remoteCameraTracks.length === 1 ? "grid-cols-1" : "grid-cols-2",
+              activeCameraTracks.length === 1 ? "grid-cols-1" : "grid-cols-2",
             ].join(" ")}>
-              {remoteCameraTracks.map((trackRef) => (
-                <div key={trackRef.participant.identity} className="relative aspect-video bg-black rounded-lg overflow-hidden">
+              {activeCameraTracks.map((trackRef) => (
+                <div key={`${trackRef.participant.identity}-cam`} className="relative aspect-video bg-black rounded-lg overflow-hidden">
                   <VideoTrack
                     trackRef={trackRef}
                     className="h-full w-full object-cover"
                   />
                   <span className="absolute bottom-1 left-2 text-[10px] text-white/80 font-medium drop-shadow">
-                    {trackRef.participant.name || trackRef.participant.identity}
+                    {trackRef.participant.isLocal ? "Você" : (trackRef.participant.name || trackRef.participant.identity)}
                   </span>
                 </div>
               ))}
@@ -340,7 +342,7 @@ export function VoiceRoomModal({
 
   return (
     <LiveKitRoom
-      video={false}
+      video={true}
       audio={true}
       token={token}
       serverUrl={serverUrl}
