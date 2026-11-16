@@ -182,6 +182,17 @@ export function VoiceRoomModal({
   const [serverUrl, setServerUrl] = useState<string | undefined>(undefined);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const supabase = useMemo(() => createClient(), []);
+  const isReloadingRef = useRef(false);
+
+  // Marca que a desconexão foi causada por um reload de página,
+  // para que o onDisconnected do LiveKitRoom não limpe o estado de voz.
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      isReloadingRef.current = true;
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -248,6 +259,7 @@ export function VoiceRoomModal({
       serverUrl={serverUrl}
       onError={(err) => setErrorMsg(err.message)}
       onDisconnected={() => {
+        if (isReloadingRef.current) return;
         playDigitalDisconnect();
         onDisconnect();
       }}

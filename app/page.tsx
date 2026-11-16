@@ -31,8 +31,11 @@ import {
   extractServerId,
   parseDmChannelId,
   readNavState,
-  toRoleLabel,
+  readVoiceState,
   writeNavState,
+  writeVoiceState,
+  clearVoiceState,
+  toRoleLabel,
 } from "@/lib/pamplex/nav";
 
 type ServerModalTab = "create" | "join";
@@ -219,6 +222,16 @@ export default function PamplexApp() {
       if (saved.activeChannelId) setActiveChannelId(saved.activeChannelId);
       if (saved.activeDmUserId) setActiveDmUserId(saved.activeDmUserId);
     }
+
+    const savedVoice = readVoiceState();
+    if (savedVoice) {
+      if (savedVoice.connectedVoiceChannelId)
+        setConnectedVoiceChannelId(savedVoice.connectedVoiceChannelId);
+      if (savedVoice.activeCallRoom) setActiveCallRoom(savedVoice.activeCallRoom);
+      setIsMuted(savedVoice.isMuted);
+      setIsDeafened(savedVoice.isDeafened);
+    }
+
     setNavRestored(true);
   }, []);
 
@@ -231,6 +244,11 @@ export default function PamplexApp() {
       activeDmUserId,
     });
   }, [navRestored, isHomeActive, activeServerId, activeChannelId, activeDmUserId]);
+
+  useEffect(() => {
+    if (!navRestored) return;
+    writeVoiceState({ connectedVoiceChannelId, activeCallRoom, isMuted, isDeafened });
+  }, [navRestored, connectedVoiceChannelId, activeCallRoom, isMuted, isDeafened]);
 
   useEffect(() => {
     if (!user) {
@@ -948,6 +966,7 @@ export default function PamplexApp() {
     setIsDeafened(false);
     setIsScreenSharing(false);
     setVoiceParticipants([]);
+    clearVoiceState();
   };
 
   const handleToggleDeafen = () => {

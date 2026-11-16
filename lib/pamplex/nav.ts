@@ -3,6 +3,7 @@ import type { PamplexMember } from "@/components/app/types";
 export const PRODUCTION_URL = "https://pamplex-lilac.vercel.app";
 export const NAV_KEY = "pamplex_nav_state";
 export const PENDING_INVITE_KEY = "pamplex_pending_invite";
+export const VOICE_STATE_KEY = "pamplex_voice_state";
 export const UUID_REGEX =
   /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 
@@ -46,6 +47,54 @@ export function writeNavState(state: NavState): void {
     window.localStorage.setItem(NAV_KEY, JSON.stringify(state));
   } catch {
     // Sem storage disponível: a navegação simplesmente não é restaurada.
+  }
+}
+
+export interface VoiceState {
+  connectedVoiceChannelId: string | null;
+  activeCallRoom: string | null;
+  isMuted: boolean;
+  isDeafened: boolean;
+}
+
+export function readVoiceState(): VoiceState | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.sessionStorage.getItem(VOICE_STATE_KEY);
+    if (!raw) return null;
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+    const value = parsed as Partial<VoiceState>;
+    return {
+      connectedVoiceChannelId:
+        typeof value.connectedVoiceChannelId === "string"
+          ? value.connectedVoiceChannelId
+          : null,
+      activeCallRoom:
+        typeof value.activeCallRoom === "string" ? value.activeCallRoom : null,
+      isMuted: typeof value.isMuted === "boolean" ? value.isMuted : false,
+      isDeafened: typeof value.isDeafened === "boolean" ? value.isDeafened : false,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function writeVoiceState(state: VoiceState): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.setItem(VOICE_STATE_KEY, JSON.stringify(state));
+  } catch {
+    // Sem storage disponível.
+  }
+}
+
+export function clearVoiceState(): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.removeItem(VOICE_STATE_KEY);
+  } catch {
+    // Sem storage disponível.
   }
 }
 
